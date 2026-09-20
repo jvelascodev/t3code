@@ -1,5 +1,6 @@
 import {
   AntigravitySettings,
+  AtomicSettings,
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
@@ -10,6 +11,7 @@ import {
 import type * as Schema from "effect/Schema";
 import {
   AntigravityIcon,
+  AtomicIcon,
   ClaudeAI,
   CursorIcon,
   GrokIcon,
@@ -44,6 +46,13 @@ export interface ProviderClientDefinition {
 }
 
 const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
+  {
+    value: ProviderDriverKind.make("atomic"),
+    label: "Atomic",
+    icon: AtomicIcon,
+    settingsSchema: AtomicSettings,
+    badgeLabel: "Early Access",
+  },
   {
     value: ProviderDriverKind.make("codex"),
     label: "Codex",

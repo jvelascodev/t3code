@@ -1,3 +1,4 @@
+import { AtomicDriver, type AtomicDriverEnv } from "./Drivers/AtomicDriver.ts";
 /**
  * BUILT_IN_DRIVERS — the static set of `ProviderDriver`s this build ships
  * with.
@@ -39,7 +40,8 @@ export type BuiltInDriversEnv =
   | CursorDriverEnv
   | GrokDriverEnv
   | OpenCodeDriverEnv
-  | AntigravityDriverEnv;
+  | AntigravityDriverEnv
+  | AtomicDriverEnv;
 
 /**
  * Ordered list of built-in drivers. Order matters only for tie-breaking in
@@ -53,4 +55,5 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   GrokDriver,
   OpenCodeDriver,
   AntigravityDriver,
+  AtomicDriver,
 ];
