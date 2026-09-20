@@ -11,6 +11,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { mergeProviderSnapshot } from "../Layers/ProviderRegistry.ts";
 import { AtomicDriver } from "./AtomicDriver.ts";
 
 const testLayer = ServerConfig.layerTest(process.cwd(), { prefix: "t3-atomic-driver-" }).pipe(
@@ -72,7 +73,7 @@ it.layer(testLayer)("Atomic driver", (it) => {
         expect(initial).toMatchObject({
           installed: true,
           version: "1.0.0",
-          status: "ready",
+          status: "warning",
           displayName: "My Atomic",
           driver: "atomic",
         });
@@ -80,7 +81,24 @@ it.layer(testLayer)("Atomic driver", (it) => {
         expect(instance.refreshModels).toBeDefined();
         yield* instance.refreshModels!();
         const refreshed = yield* instance.snapshot.getSnapshot;
+        expect(refreshed.status).toBe("ready");
         expect(refreshed.models.map((model) => model.slug)).toEqual(["fixture/test"]);
+        expect(mergeProviderSnapshot(initial, refreshed).models).toEqual(refreshed.models);
+        const fixture = yield* fs.readFileString(binaryPath);
+        yield* fs.writeFileString(
+          binaryPath,
+          fixture.replace('[{ provider: "fixture", id: "test", name: "Test model" }]', "[]"),
+        );
+        yield* instance.refreshModels!();
+        const empty = yield* instance.snapshot.getSnapshot;
+        expect(empty).toMatchObject({
+          installed: true,
+          status: "warning",
+          auth: { status: "unauthenticated" },
+          models: [],
+        });
+        expect(empty.message).toContain("/login");
+        expect(mergeProviderSnapshot(refreshed, empty).models).toEqual([]);
       }).pipe(Effect.scoped),
   );
 });

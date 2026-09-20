@@ -369,12 +369,13 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
               ...(steering ? { streamingBehavior: "steer" } : {}),
             })
             .pipe(
-              Effect.onError(() =>
+              Effect.catch((error) =>
                 Effect.gen(function* () {
                   if (!steering) {
-                    ctx.error = "Atomic rejected the prompt";
+                    ctx.error = error.detail;
                     yield* finish(ctx);
                   }
+                  return yield* error;
                 }),
               ),
             );

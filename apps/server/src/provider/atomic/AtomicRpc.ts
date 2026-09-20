@@ -144,7 +144,7 @@ export const makeAtomicRpc = Effect.fn("makeAtomicRpc")(function* (options: {
           const error = atomicError(type, "Atomic RPC request timed out");
           return fail(error).pipe(Effect.andThen(Effect.fail(error)));
         }),
-        Effect.mapError((cause) => atomicError(type, String(cause))),
+        Effect.mapError((cause) => atomicError(type, cause.detail)),
         Effect.ensuring(
           Effect.sync(() => {
             pending.delete(id);

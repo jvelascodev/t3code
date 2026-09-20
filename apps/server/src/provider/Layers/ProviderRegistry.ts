@@ -103,27 +103,33 @@ export function upsertProviderWorkspaceSnapshot(
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
   const isCodex = provider.driver === ProviderDriverKind.make("codex");
-  if (!isAntigravity && !isCodex && provider.driver !== ProviderDriverKind.make("opencode")) {
+  const isAtomic = provider.driver === ProviderDriverKind.make("atomic");
+  if (
+    !isAntigravity &&
+    !isCodex &&
+    !isAtomic &&
+    provider.driver !== ProviderDriverKind.make("opencode")
+  ) {
     return true;
   }
 
   if (
-    (isAntigravity || isCodex) &&
+    (isAntigravity || isCodex || isAtomic) &&
     (!provider.enabled || provider.auth.status === "unauthenticated")
   ) {
     return false;
   }
 
   // Successful discovery replaces these inventories so cached retired models disappear.
-  // Antigravity's local health check does not authenticate or discover models.
-  const isPendingAntigravityAuthentication =
-    isAntigravity && provider.status === "warning" && provider.auth.status === "unknown";
+  // Atomic and Antigravity local health checks do not authenticate or discover models.
+  const isPendingAuthentication =
+    (isAntigravity || isAtomic) &&
+    provider.status === "warning" &&
+    provider.auth.status === "unknown";
   const isPendingInitialProbe =
     provider.enabled && !provider.installed && provider.status === "warning";
   const didInstalledProviderProbeFail = provider.installed && provider.status === "error";
-  return (
-    isPendingAntigravityAuthentication || isPendingInitialProbe || didInstalledProviderProbeFail
-  );
+  return isPendingAuthentication || isPendingInitialProbe || didInstalledProviderProbeFail;
 };
 
 const shouldRetainMissingOpenCodeMetadata = (provider: ServerProvider): boolean =>

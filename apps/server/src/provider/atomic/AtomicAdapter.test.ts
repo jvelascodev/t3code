@@ -125,7 +125,10 @@ it.layer(layer)("Atomic adapter", (it) => {
       const { adapter, events, threadId } = yield* setup;
       yield* adapter.startSession({ threadId, runtimeMode: "full-access" });
       yield* adapter.sendTurn({ threadId, input: "reject" }).pipe(Effect.flip);
-      expect((yield* nextEvent(events, "turn.completed")).payload.state).toBe("failed");
+      expect((yield* nextEvent(events, "turn.completed")).payload).toMatchObject({
+        state: "failed",
+        errorMessage: "Rejected prompt",
+      });
       yield* adapter.sendTurn({ threadId, input: "crash" }).pipe(Effect.flip);
       expect((yield* nextEvent(events, "turn.completed")).payload.state).toBe("failed");
       expect((yield* nextEvent(events, "session.exited")).payload.recoverable).toBe(true);
