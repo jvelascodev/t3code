@@ -80,6 +80,7 @@ export const AtomicDriver: ProviderDriver<AtomicSettings, AtomicDriverEnv> = {
       let models: ReadonlyArray<ServerProviderModel> = [
         { slug: "default", name: "Atomic default", isDefault: true, isCustom: false, capabilities },
       ];
+      let modelsDiscovered = false;
       const build = (probe: Parameters<typeof buildServerProvider>[0]["probe"]) => ({
         ...stamp(
           buildServerProvider({
@@ -110,10 +111,13 @@ export const AtomicDriver: ProviderDriver<AtomicSettings, AtomicDriverEnv> = {
         return build({
           installed: true,
           version: parseGenericCliVersion(result.stdout),
-          status: "ready",
-          auth: { status: "unknown" },
-          message:
-            "Uses Atomic CLI credentials. Full access is required. Refresh models to discover authenticated models.",
+          status: modelsDiscovered && models.length > 0 ? "ready" : "warning",
+          auth: { status: modelsDiscovered && models.length === 0 ? "unauthenticated" : "unknown" },
+          message: !modelsDiscovered
+            ? "Atomic is installed. Refresh models to check available credentials and models. Full access is required."
+            : models.length === 0
+              ? "No available Atomic models. Run atomic on the server and use /login, or configure an API key, then refresh models."
+              : "Uses Atomic CLI credentials. Full access is required.",
         });
       }).pipe(
         Effect.timeout("5 seconds"),
@@ -199,6 +203,7 @@ export const AtomicDriver: ProviderDriver<AtomicSettings, AtomicDriverEnv> = {
             const result = yield* rpc
               .request("get_available_models")
               .pipe(Effect.flatMap(decodeModels));
+            modelsDiscovered = true;
             models = result.models.map((model) => ({
               slug: `${model.provider}/${model.id}`,
               name: model.name,
