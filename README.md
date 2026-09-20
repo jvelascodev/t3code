@@ -1,4 +1,6 @@
-# T3 Code
+# T3 Code with Atomic
+
+This independent fork adds [Atomic](https://github.com/bastani-inc/atomic) support to [T3 Code](https://github.com/pingdotgg/t3code). See the [Atomic setup guide](docs/user/providers-atomic.md). Run this checkout to use the integration; upstream downloads do not include this fork's changes.
 
 T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
 
