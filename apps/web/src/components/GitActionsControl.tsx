@@ -985,6 +985,7 @@ export default function GitActionsControl({
         : null,
   );
   const activeServerThread = useThreadShell(activeThreadRef);
+  const canChangeWorkspace = activeServerThread?.conversationKind !== "agent";
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -1246,6 +1247,7 @@ export default function GitActionsControl({
       progressToastId,
       filePaths,
     }: RunGitActionWithToastInput) => {
+      if (featureBranch && !canChangeWorkspace) return;
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.refName ?? null;
       const actionIsDefaultBranch = featureBranch ? false : isDefaultRef;
@@ -2015,14 +2017,16 @@ export default function GitActionsControl({
             >
               Cancel
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={noneSelected}
-              onClick={runDialogActionOnNewBranch}
-            >
-              Commit on new branch
-            </Button>
+            {canChangeWorkspace && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={noneSelected}
+                onClick={runDialogActionOnNewBranch}
+              >
+                Commit on new branch
+              </Button>
+            )}
             <Button size="sm" disabled={noneSelected} onClick={runDialogAction}>
               Commit
             </Button>
@@ -2070,13 +2074,15 @@ export default function GitActionsControl({
             >
               {pendingDefaultBranchActionCopy?.continueLabel ?? "Continue"}
             </Button>
-            <Button
-              className="min-h-8 w-full max-w-full whitespace-normal py-1.5 leading-snug sm:min-h-7 sm:w-auto"
-              size="sm"
-              onClick={checkoutFeatureBranchAndContinuePendingAction}
-            >
-              Check out feature branch & continue
-            </Button>
+            {canChangeWorkspace && (
+              <Button
+                className="min-h-8 w-full max-w-full whitespace-normal py-1.5 leading-snug sm:min-h-7 sm:w-auto"
+                size="sm"
+                onClick={checkoutFeatureBranchAndContinuePendingAction}
+              >
+                Check out feature branch & continue
+              </Button>
+            )}
           </DialogFooter>
         </DialogPopup>
       </Dialog>

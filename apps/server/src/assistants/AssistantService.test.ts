@@ -112,6 +112,79 @@ it.layer(testLayer)("AssistantService", (it) => {
       }),
   );
 
+  it.effect(
+    "keeps agent conversation identity independent of the profile and task workspace choices",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* Service.AssistantService;
+        const engine = yield* OrchestrationEngineService;
+        const snapshots = yield* ProjectionSnapshotQuery;
+        const repository = yield* Repository.AssistantRepository;
+        const created = yield* service.act({
+          type: "save",
+          name: "Workspace coordinator",
+          instructions: "Plan",
+        });
+        const opened = yield* service.act({ type: "open", id: created.assistant!.id });
+        const current = Option.getOrThrow(yield* snapshots.getThreadShellById(opened.threadId!));
+        assert.equal(current.worktreePath, null);
+        assert.equal(current.branch, null);
+        const invalidWorkspace = yield* engine
+          .dispatch({
+            type: "thread.meta.update",
+            commandId: CommandId.make("legacy-coordinator-worktree"),
+            threadId: current.id,
+            worktreePath: "/tmp/legacy-agent-worktree",
+            branch: "legacy",
+          })
+          .pipe(Effect.result);
+        assert.equal(invalidWorkspace._tag, "Failure");
+        yield* service.act({ type: "open", id: created.assistant!.id });
+        const repaired = Option.getOrThrow(yield* snapshots.getThreadShellById(current.id));
+        assert.equal(repaired.worktreePath, null);
+        assert.equal(repaired.branch, null);
+        const fresh = yield* service.act({ type: "open", id: created.assistant!.id, fresh: true });
+        const next = Option.getOrThrow(yield* snapshots.getThreadShellById(fresh.threadId!));
+        assert.equal(next.projectId, current.projectId);
+        assert.equal(next.worktreePath, null);
+        assert.equal(next.branch, null);
+        assert.equal(current.conversationKind, "agent");
+        assert.equal(next.conversationKind, "agent");
+        const task = yield* service.act({
+          type: "delegate",
+          id: created.assistant!.id,
+          title: "Business task",
+          prompt: "Research",
+        });
+        assert.equal(
+          Option.getOrThrow(yield* snapshots.getThreadShellById(task.threadId!)).conversationKind,
+          "task",
+        );
+        yield* repository.remove(created.assistant!.id);
+        const replacement = yield* service.act({
+          type: "save",
+          projectId: current.projectId,
+          name: "Replacement",
+          instructions: "Plan",
+        });
+        const repurposed = yield* service
+          .act({
+            type: "delegate",
+            id: replacement.assistant!.id,
+            threadId: current.id,
+            title: "Not a task",
+            prompt: "Implement",
+          })
+          .pipe(Effect.result);
+        assert.equal(repurposed._tag, "Failure");
+
+        assert.equal(
+          Option.getOrThrow(yield* snapshots.getThreadShellById(current.id)).conversationKind,
+          "agent",
+        );
+      }),
+  );
+
   it.effect("reassigns an idle agent without moving conversations or project memory", () =>
     Effect.gen(function* () {
       const service = yield* Service.AssistantService;

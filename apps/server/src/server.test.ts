@@ -11380,6 +11380,96 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("rejects coordinator workspace changes before bootstrap side effects", () =>
+    Effect.gen(function* () {
+      const dispatched: Array<OrchestrationCommand> = [];
+      const createWorktree = vi.fn(() => Effect.die("Coordinator must not create a worktree"));
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: { createWorktree },
+          projectionSnapshotQuery: {
+            getThreadShellById: (threadId) => {
+              const created = dispatched.find(
+                (command) => command.type === "thread.create" && command.threadId === threadId,
+              );
+              return Effect.succeed(
+                created?.type === "thread.create"
+                  ? Option.some({
+                      ...makeDefaultOrchestrationThreadShell(),
+                      id: threadId,
+                      conversationKind: created.conversationKind,
+                    })
+                  : Option.none(),
+              );
+            },
+            getProjectShellById: () =>
+              Effect.succeed(Option.some(makeDefaultOrchestrationReadModel().projects[0]!)),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command);
+                return { sequence: dispatched.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const saved = yield* client[WS_METHODS.assistantsAct]({
+              type: "save",
+              projectId: defaultProjectId,
+              name: "Coordinator",
+              instructions: "Coordinate tasks",
+            });
+            const opened = yield* client[WS_METHODS.assistantsAct]({
+              type: "open",
+              id: saved.assistant!.id,
+            });
+            const threadId = opened.threadId!;
+            const before = dispatched.length;
+            const rejected = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.turn.start",
+              commandId: CommandId.make("coordinator-worktree"),
+              threadId,
+              message: {
+                messageId: MessageId.make("coordinator-message"),
+                role: "user",
+                text: "Plan work",
+                attachments: [],
+              },
+              modelSelection: defaultModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              bootstrap: {
+                prepareWorktree: {
+                  projectCwd: "/tmp/default-project",
+                  baseBranch: "main",
+                  branch: "coordinator-bad",
+                },
+              },
+              createdAt: "2026-01-01T00:00:00.000Z",
+            }).pipe(Effect.result);
+            assert.equal(rejected._tag, "Failure");
+            assert.equal(dispatched.length, before);
+            assert.equal(createWorktree.mock.calls.length, 0);
+            yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.meta.update",
+              commandId: CommandId.make("ordinary-meta"),
+              threadId: defaultThreadId,
+              worktreePath: "/tmp/task-checkout",
+              branch: "task",
+            });
+            assert.equal(dispatched.length, before + 1);
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("falls back to the project checkout when the worktree base has no commit", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];

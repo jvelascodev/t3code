@@ -790,7 +790,12 @@ export const ThreadPullRequestLink = Schema.Struct({
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;
 
+export const ThreadConversationKind = Schema.Literals(["task", "agent"]);
+export type ThreadConversationKind = typeof ThreadConversationKind.Type;
+
 export const OrchestrationThread = Schema.Struct({
+  // Omitted by older clients and events; those conversations are task threads.
+  conversationKind: Schema.optional(ThreadConversationKind),
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
@@ -878,6 +883,8 @@ export const OrchestrationProjectShell = Schema.Struct({
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
 export const OrchestrationThreadShell = Schema.Struct({
+  // Omitted by older clients and events; those conversations are task threads.
+  conversationKind: Schema.optional(ThreadConversationKind),
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
@@ -1112,6 +1119,8 @@ const ProjectDeleteCommand = Schema.Struct({
 });
 
 const ThreadCreateCommand = Schema.Struct({
+  // Omitted by older clients and events; those conversations are task threads.
+  conversationKind: Schema.optional(ThreadConversationKind),
   type: Schema.Literal("thread.create"),
   commandId: CommandId,
   threadId: ThreadId,
@@ -1746,6 +1755,8 @@ export const ProjectDeletedPayload = Schema.Struct({
 });
 
 export const ThreadCreatedPayload = Schema.Struct({
+  // Omitted by older clients and events; those conversations are task threads.
+  conversationKind: Schema.optional(ThreadConversationKind),
   threadId: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,

@@ -121,6 +121,7 @@ export function applyThreadDetailEvent(
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch,
+          conversationKind: event.payload.conversationKind ?? "task",
           worktreePath: event.payload.worktreePath,
           branchPullRequest: null,
           latestTurn: null,
