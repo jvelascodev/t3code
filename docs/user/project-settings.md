@@ -121,3 +121,5 @@ On mobile, use **Settings → Source control** to change selected environment de
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+To assign an existing agent to another project, edit its Project field or ask the main agent to reassign it. The destination must not already have an agent. Finish or stop active work first. Reassignment starts a fresh conversation and clears saved project memory; earlier conversations and tasks remain in their original projects. The main agent continues to work across projects.

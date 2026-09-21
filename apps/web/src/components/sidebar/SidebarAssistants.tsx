@@ -148,7 +148,7 @@ function EnvironmentAssistants({
                   ? "Main agent"
                   : assistant.name}
               </span>
-              <span className="block truncate text-xs text-muted-foreground">
+              <span className="block truncate text-[11px] leading-4 text-muted-foreground">
                 {assistant.kind === "main"
                   ? "Across projects"
                   : (projectNames.get(assistant.projectId) ?? "Project unavailable")}
@@ -167,7 +167,9 @@ function EnvironmentAssistants({
           <BotIcon className="size-4 shrink-0" />
           <span className="min-w-0 flex-1">
             <span className="block truncate">Main agent</span>
-            <span className="block truncate text-xs text-muted-foreground">Across projects</span>
+            <span className="block truncate text-[11px] leading-4 text-muted-foreground">
+              Across projects
+            </span>
           </span>
         </button>
       )}

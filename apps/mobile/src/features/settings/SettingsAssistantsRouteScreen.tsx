@@ -178,7 +178,7 @@ function EnvironmentAssistants({ environmentId }: { environmentId: EnvironmentId
             maxLength={16000}
             onChangeText={setInstructions}
           />
-          {editing === "new" && (
+          {(editing === "new" || editing?.kind === "project") && (
             <SettingsSection title="Project">
               <SettingsRow
                 icon="folder"
@@ -187,11 +187,23 @@ function EnvironmentAssistants({ environmentId }: { environmentId: EnvironmentId
                   setChoices({
                     title: "Choose a project",
                     options: [
-                      { id: "new", text: "Create a workspace", onPress: () => setProjectId(null) },
+                      ...(editing === "new"
+                        ? [
+                            {
+                              id: "new",
+                              text: "Create a workspace",
+                              onPress: () => setProjectId(null),
+                            },
+                          ]
+                        : []),
                       ...projects
                         .filter(
                           (project) =>
-                            !query.data?.assistants.some((agent) => agent.projectId === project.id),
+                            !query.data?.assistants.some(
+                              (agent) =>
+                                agent.projectId === project.id &&
+                                (editing === "new" || agent.id !== editing?.id),
+                            ),
                         )
                         .map((project) => ({
                           id: project.id,
@@ -207,6 +219,13 @@ function EnvironmentAssistants({ environmentId }: { environmentId: EnvironmentId
           {!supportsAgentCoordination(
             providers.find((provider) => provider.instanceId === model.instanceId)?.driver,
           ) && <Text>{AGENT_CHAT_ONLY_NOTICE}</Text>}
+          {editing !== "new" && editing && projectId !== editing.projectId && (
+            <Text>
+              Changing project starts a fresh conversation and clears saved project memory. Previous
+              conversations and tasks stay in their original projects. Finish or stop active work
+              first.
+            </Text>
+          )}
           <SettingsSection title="Provider">
             <SettingsRow
               icon="gearshape"

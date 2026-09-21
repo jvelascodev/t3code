@@ -22,7 +22,7 @@ export const AssistantsToolkit = Toolkit.make(
     .annotate(Tool.OpenWorld, false),
   Tool.make("assistant_action", {
     description:
-      "Create or edit project assistants, open a conversation, delegate or resume work, stop a task, pause/resume coordination, save durable memory, or change the default provider. Omit projectId when saving a new assistant to create a general-purpose project without Git. Use IDs from assistant_status. Codex is the initial default. At most three delegated tasks run per assistant. Merge and deploy permissions are not granted by delegation.",
+      "Create or edit project assistants, open a conversation, delegate or resume work, stop a task, pause/resume coordination, save durable memory, or change the default provider. Omit projectId when saving a new assistant to create a general-purpose project without Git. To assign or change a project, save the existing agent ID with the target projectId. Reassignment requires idle work and a project without another agent; it starts a fresh conversation and clears project memory while keeping old conversations and tasks in their original projects. The main agent can reassign project agents. Use IDs from assistant_status. Codex is the initial default. At most three delegated tasks run per assistant. Merge and deploy permissions are not granted by delegation.",
     parameters: Schema.Struct({ action: Schema.toType(AssistantAction) }),
     success: AssistantActionResult,
     failure: AssistantError,

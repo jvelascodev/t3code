@@ -112,6 +112,56 @@ it.layer(testLayer)("AssistantService", (it) => {
       }),
   );
 
+  it.effect("reassigns an idle agent without moving conversations or project memory", () =>
+    Effect.gen(function* () {
+      const service = yield* Service.AssistantService;
+      const snapshots = yield* ProjectionSnapshotQuery;
+      const created = yield* service.act({
+        type: "save",
+        name: "Reassign",
+        instructions: "Coordinate",
+      });
+      const original = yield* service.act({ type: "open", id: created.assistant!.id });
+      yield* service.act({
+        type: "remember",
+        id: original.assistant!.id,
+        memory: "Old project decision",
+      });
+      const target = yield* service.act({ type: "save", name: "Destination", instructions: "" });
+      const action = {
+        type: "save" as const,
+        id: original.assistant!.id,
+        projectId: target.assistant!.projectId,
+        name: "Reassign",
+        instructions: "Coordinate",
+      };
+      const occupied = yield* service.act(action).pipe(Effect.result);
+      assert.equal(occupied._tag, "Failure");
+      yield* service.act({ type: "delete", id: target.assistant!.id });
+      yield* session(original.threadId!, "running", "reassign-busy");
+      const busy = yield* service.act(action).pipe(Effect.result);
+      assert.equal(busy._tag, "Failure");
+      yield* session(original.threadId!, "ready", "reassign-ready");
+      const moved = yield* service.act(action);
+      assert.equal(moved.assistant!.id, original.assistant!.id);
+      assert.equal(moved.assistant!.projectId, target.assistant!.projectId);
+      assert.equal(moved.assistant!.memory, "");
+      assert.equal(moved.assistant!.handoff, "");
+      assert.include(moved.assistant!.conversationThreadIds!, original.threadId!);
+      assert.notEqual(moved.threadId, original.threadId);
+      assert.equal(
+        Option.getOrThrow(yield* snapshots.getThreadShellById(original.threadId!)).projectId,
+        original.assistant!.projectId,
+      );
+      assert.equal(
+        Option.getOrThrow(yield* snapshots.getThreadShellById(moved.threadId!)).projectId,
+        target.assistant!.projectId,
+      );
+      const back = yield* service.act({ ...action, projectId: original.assistant!.projectId });
+      assert.equal(back.assistant!.projectId, original.assistant!.projectId);
+    }),
+  );
+
   it.effect("opening the main assistant twice reuses its conversation", () =>
     Effect.gen(function* () {
       const service = yield* Service.AssistantService;

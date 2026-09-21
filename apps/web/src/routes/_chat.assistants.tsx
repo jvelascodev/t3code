@@ -181,7 +181,12 @@ function AssistantWorkspace({ environmentId }: { environmentId: EnvironmentId })
             profile={editing === "new" ? null : editing}
             defaultModel={query.data.defaultModelSelection}
             projects={projects.filter(
-              (project) => !query.data?.assistants.some((agent) => agent.projectId === project.id),
+              (project) =>
+                !query.data?.assistants.some(
+                  (agent) =>
+                    agent.projectId === project.id &&
+                    (editing === "new" || agent.id !== editing.id),
+                ),
             )}
             providers={providers}
             pending={pending}
@@ -521,7 +526,7 @@ function AssistantEditor({
           placeholder="Business agent"
         />
       </label>
-      {!profile && (
+      {profile?.kind !== "main" && (
         <label className="flex flex-col gap-2 text-sm">
           Project
           <select
@@ -529,7 +534,7 @@ function AssistantEditor({
             value={projectId}
             onChange={(event) => setProjectId(event.target.value)}
           >
-            <option value="">Create a workspace for this agent</option>
+            {!profile && <option value="">Create a workspace for this agent</option>}
             {projects.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.title}
@@ -537,6 +542,12 @@ function AssistantEditor({
             ))}
           </select>
         </label>
+      )}
+      {profile && projectId !== profile.projectId && (
+        <p className="text-xs text-muted-foreground">
+          Changing project starts a fresh conversation and clears saved project memory. Previous
+          conversations and tasks stay in their original projects. Finish or stop active work first.
+        </p>
       )}
       <label className="flex flex-col gap-2 text-sm">
         What should this agent help with?
@@ -550,7 +561,7 @@ function AssistantEditor({
         />
       </label>
       <ModelFields model={model} providers={providers} onChange={setModel} disabled={pending} />
-      {profile && (
+      {profile && projectId === profile.projectId && (
         <p className="text-xs text-muted-foreground">
           Provider changes apply to the next conversation. Running tasks keep their current
           provider. Saved decisions and task history stay with this agent.
