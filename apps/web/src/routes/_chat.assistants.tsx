@@ -24,6 +24,7 @@ import { Textarea } from "../components/ui/textarea";
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
+import { useAgentChatNavigation } from "../hooks/useAgentChatNavigation";
 
 export const Route = createFileRoute("/_chat/assistants")({ component: AssistantsPage });
 
@@ -71,13 +72,15 @@ function AssistantsPage() {
 
 function AssistantWorkspace({ environmentId }: { environmentId: EnvironmentId }) {
   const navigate = useNavigate();
+  const chatNavigation = useAgentChatNavigation(environmentId);
   const { environments } = useEnvironments();
   const environment = environments.find((entry) => entry.environmentId === environmentId);
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const threads = useThreadShells().filter((thread) => thread.environmentId === environmentId);
   const query = useEnvironmentQuery(assistants.list({ environmentId, input: {} }));
   const [editing, setEditing] = useState<AssistantProfile | "new" | null>(null);
-  const [pending, setPending] = useState(false);
+  const [actionPending, setPending] = useState(false);
+  const pending = actionPending || chatNavigation.isOpening;
   const [error, setError] = useState<string | null>(null);
   const [defaultOpen, setDefaultOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -116,11 +119,7 @@ function AssistantWorkspace({ environmentId }: { environmentId: EnvironmentId })
         return false;
       }
       query.refresh();
-      if (openChat && result.value.threadId)
-        await navigate({
-          to: "/$environmentId/$threadId",
-          params: { environmentId, threadId: result.value.threadId },
-        });
+      if (openChat && result.value.threadId) chatNavigation.openChat(result.value.threadId);
       return true;
     } finally {
       setPending(false);
@@ -167,9 +166,9 @@ function AssistantWorkspace({ environmentId }: { environmentId: EnvironmentId })
             Try: “Create an agent to help with my business and plan next week's priorities.”
           </p>
         </section>
-        {(error || query.error) && (
+        {(error || chatNavigation.error || query.error) && (
           <div role="alert" className="space-y-2 text-sm text-destructive">
-            <p>{error ?? query.error}</p>
+            <p>{error ?? chatNavigation.error ?? query.error}</p>
             <Button variant="outline" size="sm" onClick={query.refresh}>
               Try again
             </Button>

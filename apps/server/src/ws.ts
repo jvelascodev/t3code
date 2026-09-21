@@ -1753,8 +1753,32 @@ const makeWsRpcLayer = (
                 ),
               );
 
+        const guardedDispatch = Effect.gen(function* () {
+          if (
+            normalizedCommand.type === "thread.turn.start" &&
+            (normalizedCommand.bootstrap?.prepareWorktree ||
+              normalizedCommand.bootstrap?.createThread) &&
+            (yield* projectionSnapshotQuery
+              .getThreadShellById(normalizedCommand.threadId)
+              .pipe(
+                Effect.map(
+                  (thread) => Option.isSome(thread) && thread.value.conversationKind === "agent",
+                ),
+              ))
+          ) {
+            return yield* new OrchestrationDispatchCommandError({
+              message:
+                "Agent conversations use the project workspace. Create a task thread to use a worktree.",
+            });
+          }
+          return yield* dispatchEffect;
+        }).pipe(
+          Effect.mapError((cause) =>
+            toDispatchCommandError(cause, "Could not validate agent workspace"),
+          ),
+        );
         return startup
-          .enqueueCommand(dispatchEffect)
+          .enqueueCommand(guardedDispatch)
           .pipe(
             Effect.mapError((cause) =>
               toDispatchCommandError(cause, "Failed to dispatch orchestration command"),

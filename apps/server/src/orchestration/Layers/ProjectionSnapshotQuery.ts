@@ -572,6 +572,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
           branch,
+          conversation_kind AS "conversationKind",
           worktree_path AS "worktreePath",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
@@ -613,6 +614,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
           branch,
+          conversation_kind AS "conversationKind",
           worktree_path AS "worktreePath",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
@@ -686,6 +688,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
           branch,
+          conversation_kind AS "conversationKind",
           worktree_path AS "worktreePath",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
@@ -1251,6 +1254,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           interaction_mode AS "interactionMode",
           branch,
+          conversation_kind AS "conversationKind",
           worktree_path AS "worktreePath",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
@@ -2322,6 +2326,7 @@ pending_approval_requests AS (
                 runtimeMode: row.runtimeMode,
                 interactionMode: row.interactionMode,
                 branch: row.branch,
+                conversationKind: row.conversationKind ?? "task",
                 worktreePath: row.worktreePath,
                 ...mapThreadPullRequests(
                   pullRequestsByThread.get(row.threadId) ?? [],
@@ -2567,6 +2572,7 @@ pending_approval_requests AS (
                   runtimeMode: row.runtimeMode,
                   interactionMode: row.interactionMode,
                   branch: row.branch,
+                  conversationKind: row.conversationKind ?? "task",
                   worktreePath: row.worktreePath,
                   ...mapThreadPullRequests(
                     pullRequestsByThread.get(row.threadId) ?? [],
@@ -2723,6 +2729,7 @@ pending_approval_requests AS (
                         runtimeMode: row.runtimeMode,
                         interactionMode: row.interactionMode,
                         branch: row.branch,
+                        conversationKind: row.conversationKind ?? "task",
                         worktreePath: row.worktreePath,
                         branchPullRequest: row.branchPullRequest,
                         ...mapThreadPullRequests(
@@ -2886,6 +2893,7 @@ pending_approval_requests AS (
                   runtimeMode: row.runtimeMode,
                   interactionMode: row.interactionMode,
                   branch: row.branch,
+                  conversationKind: row.conversationKind ?? "task",
                   worktreePath: row.worktreePath,
                   branchPullRequest: row.branchPullRequest,
                   ...mapThreadPullRequests(
@@ -3238,6 +3246,7 @@ pending_approval_requests AS (
         modelSelection: threadRow.value.modelSelection,
         runtimeMode: threadRow.value.runtimeMode,
         interactionMode: threadRow.value.interactionMode,
+        conversationKind: threadRow.value.conversationKind ?? "task",
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
         ...mapThreadPullRequests(
@@ -3539,6 +3548,7 @@ pending_approval_requests AS (
         modelSelection: threadRow.value.modelSelection,
         runtimeMode: threadRow.value.runtimeMode,
         interactionMode: threadRow.value.interactionMode,
+        conversationKind: threadRow.value.conversationKind ?? "task",
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
         ...mapThreadPullRequests(
