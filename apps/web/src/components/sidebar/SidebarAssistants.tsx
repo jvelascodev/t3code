@@ -33,7 +33,7 @@ export function SidebarAssistants({ threads }: { threads: readonly EnvironmentTh
         </button>
         <button
           aria-label="Manage agents"
-          className="flex size-7 items-center justify-center rounded-md text-sidebar-foreground/70 hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-ring"
+          className="flex size-7 items-center justify-center rounded-md text-sidebar-foreground/70 hover:bg-sidebar-row-hover focus-visible:outline-2 focus-visible:outline-ring"
           onClick={() => void navigate({ to: "/assistants" })}
         >
           <PlusIcon className="size-3.5" />
@@ -139,7 +139,7 @@ function EnvironmentAssistants({
             aria-current={selected ? "page" : undefined}
             disabled={pending !== null}
             onClick={() => void open(assistant.id)}
-            className={`flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60 ${selected ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-foreground hover:bg-sidebar-accent/60"}`}
+            className={`flex h-[4.875rem] w-full cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60 ${selected ? "bg-sidebar-row-active text-sidebar-foreground" : "text-sidebar-foreground hover:bg-sidebar-row-hover"}`}
           >
             <BotIcon className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1">
@@ -160,7 +160,7 @@ function EnvironmentAssistants({
       })}
       {query.data && !profiles.some((assistant) => assistant.kind === "main") && (
         <button
-          className="flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-sidebar-foreground hover:bg-sidebar-accent/60"
+          className="flex h-[4.875rem] w-full cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-sidebar-foreground hover:bg-sidebar-row-hover focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60"
           disabled={pending !== null}
           onClick={() => void open()}
         >
