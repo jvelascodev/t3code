@@ -1917,6 +1917,8 @@ export default function ChatView(props: ChatViewProps) {
   // depend on which route is mounted.
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  const isCoordinatorChat = activeThread?.conversationKind === "agent";
+  const canChangeWorkspace = !isCoordinatorChat;
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
@@ -3755,13 +3757,13 @@ export default function ChatView(props: ChatViewProps) {
   // content-driven: Git/environment context or controls that actually fit.
   const mountComposerContextStrip = shouldShowComposerContextStrip({
     hasActiveProject: activeProject !== null,
-    isGitRepo,
+    isGitRepo: isGitRepo && canChangeWorkspace,
     showEnvironmentIndicator: showComposerEnvironmentIndicator,
     hostsRestingComposerControls: routeKind === "server",
   });
   const showComposerContextStrip = shouldShowComposerContextStrip({
     hasActiveProject: activeProject !== null,
-    isGitRepo,
+    isGitRepo: isGitRepo && canChangeWorkspace,
     showEnvironmentIndicator: showComposerEnvironmentIndicator,
     hostsRestingComposerControls: routeKind === "server" && restingComposerControlsVisible,
   });
@@ -5819,6 +5821,7 @@ export default function ChatView(props: ChatViewProps) {
     draftThreadEnvMode: isLocalDraftThread ? draftThread?.envMode : undefined,
   });
   const canOverrideServerThreadEnvMode = Boolean(
+    !isCoordinatorChat &&
     isServerThread &&
     activeThread &&
     activeThread.messages.length === 0 &&
@@ -5828,8 +5831,9 @@ export default function ChatView(props: ChatViewProps) {
   const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
     ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
     : derivedEnvMode;
-  const activeThreadBranch =
-    canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
+  const activeThreadBranch = isCoordinatorChat
+    ? null
+    : canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
       ? pendingServerThreadBranch
       : (activeThread?.branch ?? null);
   const startFromOrigin = isLocalDraftThread
@@ -5839,7 +5843,7 @@ export default function ChatView(props: ChatViewProps) {
         activeProjectSettings.settings.newWorktreesStartFromOrigin)
       : false;
   const sendEnvMode = resolveSendEnvMode({
-    requestedEnvMode: envMode,
+    requestedEnvMode: isCoordinatorChat ? "local" : envMode,
     isGitRepo,
   });
   const localCheckoutBranchMismatch = useMemo(
@@ -10196,7 +10200,7 @@ export default function ChatView(props: ChatViewProps) {
                                 ref={branchToolbarRef}
                                 environmentId={activeThread.environmentId}
                                 threadId={activeThread.id}
-                                showGitControls={isGitRepo}
+                                showGitControls={isGitRepo && canChangeWorkspace}
                                 {...(routeKind === "draft" && draftId ? { draftId } : {})}
                                 onEnvModeChange={onEnvModeChange}
                                 startFromOrigin={startFromOrigin}

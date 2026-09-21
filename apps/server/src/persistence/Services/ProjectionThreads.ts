@@ -7,6 +7,7 @@
  * @module ProjectionThreadRepository
  */
 import {
+  ThreadConversationKind,
   CommandId,
   IsoDateTime,
   ModelSelection,
@@ -27,6 +28,7 @@ import type * as Effect from "effect/Effect";
 import type { ProjectionRepositoryError } from "../Errors.ts";
 
 export const ProjectionThread = Schema.Struct({
+  conversationKind: Schema.optional(ThreadConversationKind),
   threadId: ThreadId,
   projectId: ProjectId,
   title: Schema.String,

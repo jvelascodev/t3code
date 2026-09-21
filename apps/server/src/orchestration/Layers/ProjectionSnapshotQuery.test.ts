@@ -449,6 +449,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       ]);
       assert.deepEqual(snapshot.threads, [
         {
+          conversationKind: "task",
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread 1",
@@ -575,6 +576,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       ]);
       assert.deepEqual(shellSnapshot.threads, [
         {
+          conversationKind: "task",
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread 1",

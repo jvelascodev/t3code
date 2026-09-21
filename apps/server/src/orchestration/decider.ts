@@ -386,6 +386,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (
+        command.conversationKind === "agent" &&
+        (command.worktreePath !== null || command.branch !== null)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Agent conversations use the project workspace.",
+        });
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -403,6 +412,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           runtimeMode: command.runtimeMode,
           interactionMode: command.interactionMode,
           branch: command.branch,
+          conversationKind: command.conversationKind ?? "task",
           worktreePath: command.worktreePath,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -916,6 +926,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           : (thread.pullRequests.find(
               (link) => link.url === legacy.url && link.number === legacy.number,
             ) ?? null);
+      if (
+        thread.conversationKind === "agent" &&
+        (command.worktreePath != null || command.branch != null)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Agent conversations use the project workspace.",
+        });
+      }
       if (command.linkedPullRequest != null) {
         const { linkedPullRequest: linked, ...metadata } = command;
         const project = readModel.projects.find((project) => project.id === thread.projectId);

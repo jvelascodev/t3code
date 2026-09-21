@@ -145,6 +145,18 @@ export const make = Effect.gen(function* () {
             threadId: profile.threadId,
           });
         }
+        if (
+          (existing.value.worktreePath || existing.value.branch) &&
+          !(yield* busy(existing.value))
+        ) {
+          yield* engine.dispatch({
+            type: "thread.meta.update",
+            commandId: commandId(),
+            threadId: profile.threadId,
+            branch: null,
+            worktreePath: null,
+          });
+        }
         const providerChanged =
           existing.value.modelSelection.instanceId !== profile.modelSelection.instanceId;
         if (!providerChanged || (yield* busy(existing.value))) {
@@ -191,6 +203,7 @@ export const make = Effect.gen(function* () {
       threadId,
       projectId: profile.projectId,
       title: profile.name,
+      conversationKind: "agent",
       modelSelection: profile.modelSelection,
       runtimeMode: yield* runtimeModeFor(profile.modelSelection),
       interactionMode: "default",
@@ -405,9 +418,7 @@ export const make = Effect.gen(function* () {
         existingThread.projectId !== profile.projectId ||
         existingThread.archivedAt !== null ||
         (existingTask && existingTask.assistant_id !== profile.id) ||
-        (yield* repository.list()).some(
-          (entry) => entry.threadId === threadId || entry.conversationThreadIds?.includes(threadId),
-        ))
+        existingThread.conversationKind === "agent")
     ) {
       return yield* failure("Choose an active task thread in this agent's project.");
     }

@@ -184,12 +184,14 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
               label={copy?.continueLabel ?? "Continue"}
               onPress={() => void continuePendingAction()}
             />
-            <SheetActionButton
-              icon="arrow.branch"
-              label="Feature branch & continue"
-              tone="primary"
-              onPress={() => void movePendingActionToFeatureBranch()}
-            />
+            {gitActions.canChangeWorkspace && (
+              <SheetActionButton
+                icon="arrow.branch"
+                label="Feature branch & continue"
+                tone="primary"
+                onPress={() => void movePendingActionToFeatureBranch()}
+              />
+            )}
           </View>
         </ScrollView>
       </MaterialScreenContent>
