@@ -1,3 +1,5 @@
+import * as AssistantRepository from "./assistants/AssistantRepository.ts";
+import * as AssistantService from "./assistants/AssistantService.ts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -767,6 +769,10 @@ const buildAppUnderTest = (options?: {
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
+          AssistantService.layer.pipe(
+            Layer.provideMerge(AssistantRepository.layer),
+            Layer.provide(SqlitePersistenceMemory),
+          ),
           Layer.mock(Keybindings.Keybindings)({
             loadConfigState: Effect.succeed({
               keybindings: [],

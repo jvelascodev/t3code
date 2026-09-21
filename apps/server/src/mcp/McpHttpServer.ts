@@ -1,3 +1,5 @@
+import { AssistantsToolkit } from "./toolkits/assistants/tools.ts";
+import { AssistantsToolkitHandlersLive } from "./toolkits/assistants/handlers.ts";
 import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -631,5 +633,6 @@ const McpTransportLive = McpServer.layerHttp({
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
+  McpServer.toolkit(AssistantsToolkit).pipe(Layer.provide(AssistantsToolkitHandlersLive)),
   DeviceToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

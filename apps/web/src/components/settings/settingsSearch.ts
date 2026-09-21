@@ -128,6 +128,13 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "project-assistants",
+    title: "Project agents",
+    to: "/settings/general",
+    targetId: "assistants",
+    searchTerms: ["agent", "agents", "assistant", "business", "delegate", "harness", "provider"],
+  },
+  {
     id: "storage-worktrees",
     title: "Worktree cleanup",
     to: "/settings/storage",

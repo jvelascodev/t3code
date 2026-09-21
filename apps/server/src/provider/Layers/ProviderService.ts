@@ -1,3 +1,5 @@
+import { AssistantRepository } from "../../assistants/AssistantRepository.ts";
+import { assistantInstructions } from "../../assistants/assistantPolicy.ts";
 /**
  * ProviderServiceLive - Cross-provider orchestration layer.
  *
@@ -479,6 +481,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const assistantRepository = yield* Effect.serviceOption(AssistantRepository);
   const projectionQuery = yield* Effect.serviceOption(
     ProjectionSnapshotQuery.ProjectionSnapshotQuery,
   );
@@ -1669,6 +1672,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
     }
 
+    const assistant = Option.isSome(assistantRepository)
+      ? yield* assistantRepository.value
+          .findByThread(parsed.threadId)
+          .pipe(
+            Effect.mapError((cause) =>
+              toValidationError("sendTurn", "Could not load assistant instructions.", cause),
+            ),
+          )
+      : undefined;
+    if (assistant && inputTextWithAttachmentContext !== undefined) {
+      inputTextWithAttachmentContext = `${assistantInstructions(assistant)}\n\n${inputTextWithAttachmentContext}`;
+    }
     const input = {
       ...parsed,
       ...(inputTextWithAttachmentContext !== undefined

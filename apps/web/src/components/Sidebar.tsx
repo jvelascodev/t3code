@@ -1,3 +1,5 @@
+import { assistantDirectoryAtom } from "../state/assistantDirectory";
+import { SidebarAssistants } from "./sidebar/SidebarAssistants";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
@@ -2150,7 +2152,20 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const threads = useThreadShells();
+  const allThreads = useThreadShells();
+  const assistantProfiles = useAtomValue(assistantDirectoryAtom);
+  const threads = useMemo(() => {
+    const conversations = new Set(
+      assistantProfiles.flatMap((assistant) =>
+        [assistant.threadId, ...(assistant.conversationThreadIds ?? [])]
+          .filter((id) => id !== null)
+          .map((id) => `${assistant.environmentId}:${id}`),
+      ),
+    );
+    return allThreads.filter(
+      (thread) => !conversations.has(`${thread.environmentId}:${thread.id}`),
+    );
+  }, [allThreads, assistantProfiles]);
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -4580,6 +4595,10 @@ export default function Sidebar() {
           </SidebarGroup>
         }
       >
+        <SidebarAssistants threads={allThreads} />
+        <div className="px-5 pb-2 text-xs font-medium text-sidebar-foreground/70">
+          Project threads
+        </div>
         <SidebarGroup className="ps-[calc(var(--sidebar-content-inset)+1px)] pe-[var(--sidebar-content-inset)] pb-1 pt-0 flex-1">
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
