@@ -373,6 +373,7 @@ it.layer(testLayer)("AssistantService", (it) => {
       yield* service.reconcile();
       const detail = Option.getOrThrow(yield* snapshots.getThreadDetailById(coordinatorId));
       assert.equal(detail.messages.length, 1);
+      assert.equal(detail.runtimeMode, "full-access");
       assert.include(detail.messages[0]!.text, task.threadId!);
       const stopped = yield* service
         .act({ type: "stop-task", threadId: task.threadId! })
@@ -476,6 +477,74 @@ it.layer(testLayer)("AssistantService", (it) => {
       assert.equal(continued.title, "Continue plan");
     }),
   );
+  it.effect("defaults agent conversations to Full access and preserves explicit overrides", () =>
+    Effect.gen(function* () {
+      const service = yield* Service.AssistantService;
+      const snapshots = yield* ProjectionSnapshotQuery;
+      const engine = yield* OrchestrationEngineService;
+      const main = yield* service.act({ type: "open-main" });
+      assert.equal(
+        Option.getOrThrow(yield* snapshots.getThreadShellById(main.threadId!)).runtimeMode,
+        "full-access",
+      );
+      const saved = yield* service.act({
+        type: "save",
+        name: "Manager",
+        instructions: "Coordinate",
+      });
+      const opened = yield* service.act({ type: "open", id: saved.assistant!.id });
+      assert.equal(
+        Option.getOrThrow(yield* snapshots.getThreadShellById(opened.threadId!)).runtimeMode,
+        "full-access",
+      );
+      yield* engine.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("test-agent-permission-override"),
+        createdAt: stamp,
+        threadId: opened.threadId!,
+        runtimeMode: "approval-required",
+      });
+      yield* service.act({ type: "open", id: saved.assistant!.id });
+      assert.equal(
+        Option.getOrThrow(yield* snapshots.getThreadShellById(opened.threadId!)).runtimeMode,
+        "approval-required",
+      );
+      const task = yield* service.act({
+        type: "delegate",
+        id: saved.assistant!.id,
+        title: "Task",
+        prompt: "Investigate",
+      });
+      assert.equal(
+        Option.getOrThrow(yield* snapshots.getThreadShellById(task.threadId!)).runtimeMode,
+        "full-access",
+      );
+      yield* session(task.threadId!, "ready", "permission-task-ready");
+      yield* engine.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("test-task-permission-override"),
+        createdAt: stamp,
+        threadId: task.threadId!,
+        runtimeMode: "approval-required",
+      });
+      yield* service.act({
+        type: "delegate",
+        id: saved.assistant!.id,
+        threadId: task.threadId!,
+        title: "Continue",
+        prompt: "Continue",
+      });
+      assert.equal(
+        Option.getOrThrow(yield* snapshots.getThreadShellById(task.threadId!)).runtimeMode,
+        "approval-required",
+      );
+      const fresh = yield* service.act({ type: "open", id: saved.assistant!.id, fresh: true });
+      assert.equal(
+        Option.getOrThrow(yield* snapshots.getThreadShellById(fresh.threadId!)).runtimeMode,
+        "full-access",
+      );
+    }),
+  );
   it.effect(
     "uses Full access for Atomic instances and upgrades existing supervised conversations",
     () =>
@@ -536,7 +605,7 @@ it.layer(testLayer)("AssistantService", (it) => {
         });
         assert.equal(
           Option.getOrThrow(yield* snapshots.getThreadShellById(codex.threadId!)).runtimeMode,
-          "approval-required",
+          "full-access",
         );
       }),
   );
