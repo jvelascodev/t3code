@@ -2189,6 +2189,21 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <SettingsSection id="assistants" title="Agents">
+        <SettingsRow
+          title="Project agents"
+          description="Create help for coding, business, and other work. Manage instructions, providers, and delegated tasks."
+          control={
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void navigate({ to: "/assistants" })}
+            >
+              Manage agents
+            </Button>
+          }
+        />
+      </SettingsSection>
       <ProjectDefaultsSettings category="general" />
       <SettingsSection id="organization" title="Organization">
         <SettingsRow

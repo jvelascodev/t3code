@@ -1,3 +1,4 @@
+import { AssistantService } from "./assistants/AssistantService.ts";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -654,6 +655,7 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const assistants = yield* AssistantService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -2673,6 +2675,10 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "cloud" },
           ),
+        [WS_METHODS.assistantsList]: () =>
+          observeRpcEffect(WS_METHODS.assistantsList, assistants.list()),
+        [WS_METHODS.assistantsAct]: (input) =>
+          observeRpcEffect(WS_METHODS.assistantsAct, assistants.act(input)),
         [WS_METHODS.pullRequestsList]: (input) =>
           observeRpcEffect(WS_METHODS.pullRequestsList, pullRequests.list(input), {
             "rpc.aggregate": "pull-requests",

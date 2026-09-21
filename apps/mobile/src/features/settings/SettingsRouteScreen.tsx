@@ -180,6 +180,7 @@ function SettingsIndexSections() {
           target="SettingsEnvironmentSourceControl"
           disabled={noServerTargets}
         />
+        <SettingsRow icon="text.bubble" label="Agents" target="SettingsAssistants" />
         <SettingsRow
           icon="text.alignleft"
           label="Agent behavior"

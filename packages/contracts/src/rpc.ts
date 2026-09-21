@@ -1,3 +1,9 @@
+import {
+  AssistantAction,
+  AssistantActionResult,
+  AssistantError,
+  AssistantsSnapshot,
+} from "./assistants.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
@@ -273,6 +279,8 @@ import {
 import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
+  assistantsList: "assistants.list",
+  assistantsAct: "assistants.act",
   // Project registry methods
   projectsList: "projects.list",
   projectsAdd: "projects.add",
@@ -1381,7 +1389,20 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
+const WsAssistantsListRpc = Rpc.make(WS_METHODS.assistantsList, {
+  payload: Schema.Struct({}),
+  success: AssistantsSnapshot,
+  error: Schema.Union([AssistantError, EnvironmentAuthorizationError]),
+});
+const WsAssistantsActRpc = Rpc.make(WS_METHODS.assistantsAct, {
+  payload: AssistantAction,
+  success: AssistantActionResult,
+  error: Schema.Union([AssistantError, EnvironmentAuthorizationError]),
+});
+
 export const WsRpcGroup = RpcGroup.make(
+  WsAssistantsListRpc,
+  WsAssistantsActRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

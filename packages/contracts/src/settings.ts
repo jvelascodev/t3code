@@ -1,3 +1,4 @@
+import { DEFAULT_MODEL } from "./model.ts";
 import { SshDeviceHostConfigs } from "./device.ts";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
@@ -1079,6 +1080,11 @@ export const StorageCleanupSettings = Schema.Struct({
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 export const ServerSettings = Schema.Struct({
+  defaultAssistantModelSelection: ModelSelection.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({ instanceId: ProviderInstanceId.make("codex"), model: DEFAULT_MODEL }),
+    ),
+  ),
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(
@@ -1424,6 +1430,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  defaultAssistantModelSelection: Schema.optionalKey(ModelSelection),
   worktreeCleanup: Schema.optionalKey(
     Schema.NullOr(
       Schema.Union([

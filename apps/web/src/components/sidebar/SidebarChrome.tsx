@@ -1,3 +1,4 @@
+import { BotIcon } from "lucide-react";
 import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
@@ -194,6 +195,14 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </SidebarMenuItem>
       ) : (
         <>
+          <SidebarUtilityItem
+            icon={<BotIcon />}
+            label="Agents"
+            onClick={() => {
+              closeMobileSidebar();
+              void navigate({ to: "/assistants" });
+            }}
+          />
           <SidebarUtilityItem
             icon={<SettingsIcon />}
             label="Settings"

@@ -1,3 +1,4 @@
+import { SettingsAssistantsRouteScreen } from "./features/settings/SettingsAssistantsRouteScreen";
 import {
   createPathConfigForStaticNavigation,
   getPathFromState,
@@ -197,6 +198,11 @@ const SettingsContentStack = createNativeStackNavigator({
       screen: SettingsEnvironmentSourceControlRouteScreen,
       linking: "source-control",
       options: { title: "Source control" },
+    }),
+    SettingsAssistants: createNativeStackScreen({
+      screen: SettingsAssistantsRouteScreen,
+      linking: "assistants",
+      options: { title: "Agents" },
     }),
     SettingsEnvironmentAgentBehavior: createNativeStackScreen({
       screen: SettingsEnvironmentAgentBehaviorRouteScreen,

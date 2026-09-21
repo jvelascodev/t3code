@@ -52,6 +52,28 @@ on each selected environment, and reset returns to the environment's shared list
 For workspace mode, a project's `t3.json` preference applies when the project has no override.
 Browser access changes apply when an agent session next starts.
 
+## Project agents
+
+Open **Agents** in the sidebar, or **Settings → Agents** on mobile. Talk to your main
+agent and ask it to create an agent for a project. You can also create and edit one
+manually. Choose an existing project or create a workspace for research, business planning,
+and other work that does not need Git.
+
+Each project has one agent with its own instructions, saved decisions, and task history.
+On web and desktop, agents have their own sidebar section. Their delegated work stays in
+Project threads. Previous conversations are available from the agent’s history.
+Ask it to carry out work; delegated tasks appear as ordinary threads you can inspect or stop.
+Results and requests for input return to the project agent. Provider permission prompts
+still apply. Merging, deployment, and external messages require your explicit authorization.
+
+Codex is the initial default provider. You can change the default for new agents or choose
+a provider and model for one agent. Open the agent after its current turn finishes to start a conversation with the new provider; saved decisions, recent context, and task ownership carry over.
+Running and resumed task threads keep their existing provider. Atomic agent conversations and delegated tasks use Full access because its CLI does not support sandboxed permission modes. Atomic supports chat and delegated task execution, but its T3 integration cannot create agents or coordinate tasks from chat. Use a provider with coordination tools, such as Codex or Claude, to manage Atomic task workers.
+
+Pause coordination to stop new delegation and automatic follow-ups while running tasks finish.
+Resume it to process waiting results. Starting a new conversation retains saved decisions;
+removing an agent keeps its project and conversations.
+
 ## Storage cleanup
 
 Open **Settings → Storage** to enable automatic cleanup on one machine or all connected

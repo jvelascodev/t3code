@@ -1,3 +1,6 @@
+import { supportsAgentCoordination } from "@t3tools/contracts";
+import { AssistantRepository } from "../../assistants/AssistantRepository.ts";
+import { assistantInstructions } from "../../assistants/assistantPolicy.ts";
 /**
  * ProviderServiceLive - Cross-provider orchestration layer.
  *
@@ -479,6 +482,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const assistantRepository = yield* Effect.serviceOption(AssistantRepository);
   const projectionQuery = yield* Effect.serviceOption(
     ProjectionSnapshotQuery.ProjectionSnapshotQuery,
   );
@@ -1669,7 +1673,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
     }
 
-    const input = {
+    const assistant = Option.isSome(assistantRepository)
+      ? yield* assistantRepository.value
+          .findByThread(parsed.threadId)
+          .pipe(
+            Effect.mapError((cause) =>
+              toValidationError("sendTurn", "Could not load assistant instructions.", cause),
+            ),
+          )
+      : undefined;
+    let input = {
       ...parsed,
       ...(inputTextWithAttachmentContext !== undefined
         ? { input: inputTextWithAttachmentContext }
@@ -1706,6 +1719,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           operation: "ProviderService.sendTurn",
           allowRecovery: true,
         });
+      }
+      if (assistant && inputTextWithAttachmentContext !== undefined) {
+        input = {
+          ...input,
+          input: `${assistantInstructions(assistant, supportsAgentCoordination(routed.adapter.provider))}\n\n${inputTextWithAttachmentContext}`,
+        };
       }
       metricProvider = routed.adapter.provider;
       metricModel = input.modelSelection?.model;
