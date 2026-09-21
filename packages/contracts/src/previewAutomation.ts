@@ -714,7 +714,7 @@ export class PreviewAutomationNoAvailableHostError extends Schema.TaggedError<Pr
 ) {
   override get message(): string {
     const summary = `No preview automation host is available for ${this.operation} in environment ${this.environmentId}.`;
-    return summary;
+    return `${summary} Open or reconnect T3 Code Desktop to this environment, then retry with the existing tabId. After a request timeout, a connected desktop re-registers automatically. Do not replay an action that may already have completed.`;
   }
 }
 

@@ -8,6 +8,7 @@ import {
   type ServerConfigStreamEvent,
   type ServerLifecycleStreamEvent,
   WS_METHODS,
+  WsRpcGroup,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -22,6 +23,8 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import { RpcClientError } from "effect/unstable/rpc";
+import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import * as RpcTest from "effect/unstable/rpc/RpcTest";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -91,6 +94,69 @@ const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
 });
 
 describe("environment RPC", () => {
+  it.effect("recovers repeated preview host completions across the RPC boundary", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registrations = yield* Queue.unbounded<number>();
+        const requests = yield* Queue.unbounded<PreviewAutomationStreamEvent>();
+        const retirements = yield* Queue.unbounded<void>();
+        const group = RpcGroup.make(
+          ...Array.from(WsRpcGroup.requests.values()).filter(
+            (rpc) => rpc._tag === WS_METHODS.previewAutomationConnect,
+          ),
+        );
+        let generation = 0;
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            group.toLayer({
+              [WS_METHODS.previewAutomationConnect]: () =>
+                Stream.unwrap(
+                  Effect.gen(function* () {
+                    const connectionId = `connection-${++generation}`;
+                    yield* Queue.offer(registrations, generation);
+                    return Stream.succeed({
+                      type: "connected",
+                      connectionId,
+                    } satisfies PreviewAutomationStreamEvent).pipe(
+                      Stream.concat(Stream.fromEffect(Queue.take(retirements)).pipe(Stream.drain)),
+                    );
+                  }),
+                ),
+            }),
+          ),
+        );
+        const { activeSession, supervisor } = yield* makeHarness();
+        yield* SubscriptionRef.set(
+          activeSession,
+          Option.some(session(client as unknown as WsRpcProtocolClient)),
+        );
+        const consumer = yield* subscribe(WS_METHODS.previewAutomationConnect, {
+          clientId: "preview-host",
+          environmentId: TARGET.environmentId,
+        }).pipe(
+          Stream.runForEach((event) => Queue.offer(requests, event)),
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkScoped,
+        );
+
+        for (const expectedGeneration of [1, 2, 3]) {
+          expect(yield* Queue.take(registrations)).toBe(expectedGeneration);
+          expect(yield* Queue.take(requests)).toEqual({
+            type: "connected",
+            connectionId: `connection-${expectedGeneration}`,
+          });
+          if (expectedGeneration < 3) {
+            yield* Queue.offer(retirements, undefined);
+            yield* TestClock.adjust("1 second");
+          }
+        }
+        yield* Fiber.interrupt(consumer);
+        yield* TestClock.adjust("10 seconds");
+        expect(generation).toBe(3);
+      }),
+    ),
+  );
+
   it.effect("registers a fresh preview host after completion without replaying requests", () =>
     Effect.gen(function* () {
       const firstCompleted = yield* Deferred.make<void>();
