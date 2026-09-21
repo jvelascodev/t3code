@@ -7,6 +7,7 @@ export const AssistantProfile = Schema.Struct({
   id: TrimmedNonEmptyString,
   projectId: ProjectId,
   kind: Schema.Literals(["main", "project"]),
+  projectLinked: Schema.optionalKey(Schema.Boolean),
   name: TrimmedNonEmptyString,
   instructions: Schema.String.check(Schema.isMaxLength(16000)),
   memory: Schema.String.check(Schema.isMaxLength(24000)),

@@ -28,7 +28,11 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { AssistantRepository } from "./AssistantRepository.ts";
-import { assistantTaskNotificationKey, assistantThreadBusy } from "./assistantPolicy.ts";
+import {
+  assistantTaskNotificationKey,
+  assistantThreadBusy,
+  isProjectCoordinator,
+} from "./assistantPolicy.ts";
 
 import { ProjectionTurnRepository } from "../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../persistence/Layers/ProjectionTurns.ts";
@@ -197,6 +201,7 @@ export const make = Effect.gen(function* () {
           .slice(-16000);
     }
     const threadId = ThreadId.make(NodeCrypto.randomUUID());
+    yield* repository.setExecutionPolicy(threadId, isProjectCoordinator(profile));
     yield* engine.dispatch({
       type: "thread.create",
       commandId: commandId(),
@@ -239,6 +244,7 @@ export const make = Effect.gen(function* () {
           id: NodeCrypto.randomUUID(),
           projectId: yield* createProject("Agent"),
           kind: "main",
+          projectLinked: false,
           name: "Main agent",
           instructions: "Help me manage my projects and create project agents.",
           memory: "",
@@ -295,6 +301,10 @@ export const make = Effect.gen(function* () {
         id: existing?.id ?? NodeCrypto.randomUUID(),
         projectId,
         kind: existing?.kind ?? "project",
+        projectLinked:
+          projectChanged || !existing
+            ? action.projectId !== undefined
+            : (existing.projectLinked ?? existing.kind === "project"),
         name: action.name,
         instructions: action.instructions,
         memory: existing?.memory ?? "",

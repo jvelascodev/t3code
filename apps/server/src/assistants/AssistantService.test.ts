@@ -195,6 +195,9 @@ it.layer(testLayer)("AssistantService", (it) => {
         instructions: "Coordinate",
       });
       const original = yield* service.act({ type: "open", id: created.assistant!.id });
+      const policies = yield* Repository.AssistantRepository;
+      assert.isFalse(original.assistant!.projectLinked);
+      assert.isFalse(yield* policies.isCoordinatorThread(original.threadId!));
       yield* service.act({
         type: "remember",
         id: original.assistant!.id,
@@ -217,6 +220,9 @@ it.layer(testLayer)("AssistantService", (it) => {
       yield* session(original.threadId!, "ready", "reassign-ready");
       const moved = yield* service.act(action);
       assert.equal(moved.assistant!.id, original.assistant!.id);
+      assert.isTrue(moved.assistant!.projectLinked);
+      assert.isTrue(yield* policies.isCoordinatorThread(moved.threadId!));
+      assert.isFalse(yield* policies.isCoordinatorThread(original.threadId!));
       assert.equal(moved.assistant!.projectId, target.assistant!.projectId);
       assert.equal(moved.assistant!.memory, "");
       assert.equal(moved.assistant!.handoff, "");
@@ -232,6 +238,8 @@ it.layer(testLayer)("AssistantService", (it) => {
       );
       const back = yield* service.act({ ...action, projectId: original.assistant!.projectId });
       assert.equal(back.assistant!.projectId, original.assistant!.projectId);
+      yield* service.act({ type: "delete", id: back.assistant!.id });
+      assert.isTrue(yield* policies.isCoordinatorThread(moved.threadId!));
     }),
   );
 

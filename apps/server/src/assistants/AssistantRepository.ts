@@ -42,6 +42,16 @@ export const make = Effect.gen(function* () {
   return {
     list,
     save,
+    setExecutionPolicy: (threadId: ThreadId, coordinatorOnly: boolean) =>
+      sql`INSERT INTO agent_execution_policies (thread_id, coordinator_only)
+        VALUES (${threadId}, ${coordinatorOnly ? 1 : 0})
+        ON CONFLICT(thread_id) DO NOTHING`.pipe(Effect.asVoid),
+    isCoordinatorThread: (threadId: ThreadId) =>
+      sql<{
+        coordinator_only: number;
+      }>`SELECT coordinator_only FROM agent_execution_policies WHERE thread_id = ${threadId}`.pipe(
+        Effect.map((rows) => rows[0]?.coordinator_only === 1),
+      ),
     tasks,
     findByThread,
     remove: (id: string) =>

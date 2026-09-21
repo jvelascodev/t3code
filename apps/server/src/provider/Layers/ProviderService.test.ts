@@ -1,3 +1,5 @@
+import { AssistantRepository } from "../../assistants/AssistantRepository.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -4945,16 +4947,23 @@ describe("agent browser access", () => {
     access: boolean | { readonly browser: boolean; readonly device: boolean },
     threadId: ThreadId,
     projectOverride?: boolean | { readonly browser?: boolean; readonly device?: boolean },
-    options?: { readonly withoutOrchestration?: boolean },
+    options?: {
+      readonly withoutOrchestration?: boolean;
+      readonly coordinatorOnly?: boolean;
+      readonly noCredential?: boolean;
+      readonly driver?: "codex" | "cursor";
+    },
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
       const enableAgentDeviceAccess = typeof access === "boolean" ? access : access.device;
       const issued: Array<{ threadId: ThreadId; capabilities: ReadonlyArray<string> }> = [];
       const codex = makeFakeCodexAdapter();
+      const driver = ProviderDriverKind.make(options?.driver ?? "codex");
+      const instanceId = ProviderInstanceId.make(driver);
       const providerAdapterLayer = Layer.succeed(
         ProviderAdapterRegistry.ProviderAdapterRegistry,
-        makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter }),
+        makeAdapterRegistryMock({ [driver]: { ...codex.adapter, provider: driver } }),
       );
       const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
         Layer.provide(SqlitePersistenceMemory),
@@ -5016,10 +5025,26 @@ describe("agent browser access", () => {
               threadId: request.threadId,
               capabilities: [...request.capabilities].toSorted(),
             });
-            return undefined;
+            if (!options?.coordinatorOnly || options.noCredential) return undefined;
+            return {
+              config: {
+                threadId,
+                environmentId: EnvironmentId.make("test"),
+                providerSessionId: "test",
+                providerInstanceId: instanceId,
+                endpoint: "http://localhost/mcp",
+                authorizationHeader: "Bearer test",
+                capabilities: request.capabilities,
+              },
+            };
           }),
       }).pipe(
         Layer.provide(providerAdapterLayer),
+        Layer.provide(
+          Layer.mock(AssistantRepository)({
+            isCoordinatorThread: () => Effect.succeed(options?.coordinatorOnly ?? false),
+          }),
+        ),
         Layer.provide(directoryLayer),
         Layer.provide(options?.withoutOrchestration ? Layer.empty : projectionLayer),
         Layer.provide(
@@ -5055,16 +5080,48 @@ describe("agent browser access", () => {
 
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
-        return yield* provider.startSession(threadId, {
-          provider: CODEX_DRIVER,
-          providerInstanceId: codexInstanceId,
+        const session = yield* provider.startSession(threadId, {
+          provider: driver,
+          providerInstanceId: instanceId,
           threadId,
           runtimeMode: "full-access",
         });
+        if (options?.coordinatorOnly)
+          assert.isTrue(McpProviderSession.readMcpProviderSession(threadId)?.coordinatorOnly);
+        return session;
       }).pipe(Effect.provide(providerLayer));
 
       return issued;
     });
+
+  it.effect(
+    "withholds execution capabilities from a project coordinator even when enabled globally",
+    () =>
+      Effect.gen(function* () {
+        const id = asThreadId("project-coordinator");
+        const issued = yield* startSessionWith(true, id, undefined, { coordinatorOnly: true });
+        assert.deepEqual(issued, [{ threadId: id, capabilities: [] }]);
+        McpProviderSession.clearMcpProviderSession(id);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+  it.effect(
+    "fails closed when a coordinator provider cannot restrict execution or tools are unavailable",
+    () =>
+      Effect.gen(function* () {
+        for (const options of [
+          { coordinatorOnly: true, driver: "cursor" as const },
+          { coordinatorOnly: true, noCredential: true },
+        ]) {
+          const result = yield* startSessionWith(
+            true,
+            asThreadId("unsupported-coordinator"),
+            undefined,
+            options,
+          ).pipe(Effect.result);
+          assert.equal(result._tag, "Failure");
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   // The capability on the credential is the observable that matters: a session
   // always gets a credential (the pull request toolkit is never withheld), and

@@ -18,6 +18,16 @@ and modes you choose in a draft keep their permissions.
 Approve or reject requests in the conversation to let the agent continue. Permission modes do
 not prevent the agent from asking questions about the task.
 
+## Project agents and task threads
+
+An agent assigned to a project coordinates work in task threads instead of implementing in its
+own conversation. Tell it the outcome you want; it can delegate and review results without
+asking permission for each step. New delegated task threads start with **Full access**.
+
+Project coordinators currently require Codex or Claude. Their own conversation can read context
+and manage tasks, but choosing **Full access** does not enable direct implementation there.
+Agents created without a project can work directly with Full access and can also delegate.
+
 ## Provider differences
 
 Providers enforce permissions differently. Some read-only actions can proceed in **Supervised**.
