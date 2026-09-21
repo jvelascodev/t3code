@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { AssistantError } from "@t3tools/contracts";
+import { AssistantError, supportsAgentCoordination } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AssistantRepository } from "../../../assistants/AssistantRepository.ts";
@@ -73,6 +73,7 @@ const make = Effect.gen(function* () {
             providers: (yield* providers.getProviders).map((provider) => ({
               instanceId: provider.instanceId,
               provider: provider.driver,
+              supportsAgentCoordination: supportsAgentCoordination(provider.driver),
               models: provider.models,
             })),
             tasks: state.tasks

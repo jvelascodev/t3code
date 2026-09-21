@@ -1,3 +1,4 @@
+import { ProviderAdapterRegistry } from "./provider/Services/ProviderAdapterRegistry.ts";
 import * as AssistantRepository from "./assistants/AssistantRepository.ts";
 import * as AssistantService from "./assistants/AssistantService.ts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
@@ -770,6 +771,7 @@ const buildAppUnderTest = (options?: {
       Layer.provide(
         Layer.mergeAll(
           AssistantService.layer.pipe(
+            Layer.provide(Layer.mock(ProviderAdapterRegistry)({})),
             Layer.provideMerge(AssistantRepository.layer),
             Layer.provide(SqlitePersistenceMemory),
           ),

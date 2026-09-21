@@ -1,3 +1,4 @@
+import { ProviderAdapterRegistry } from "../provider/Services/ProviderAdapterRegistry.ts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -24,6 +25,21 @@ import { assistantInstructions } from "./assistantPolicy.ts";
 
 const testLayer = Service.layer.pipe(
   Layer.provideMerge(Repository.layer),
+  Layer.provide(
+    Layer.mock(ProviderAdapterRegistry)({
+      getInstanceInfo: (instanceId) =>
+        Effect.succeed({
+          instanceId,
+          driverKind: ProviderDriverKind.make(instanceId),
+          displayName: undefined,
+          enabled: true,
+          continuationIdentity: {
+            driverKind: ProviderDriverKind.make(instanceId),
+            continuationKey: instanceId,
+          },
+        }),
+    }),
+  ),
   Layer.provideMerge(OrchestrationLayerLive),
   Layer.provide(Layer.mock(GitWorkflowService)({ isRepository: () => Effect.succeed(false) })),
   Layer.provide(Layer.succeed(RepositoryIdentityResolver, { resolve: () => Effect.succeed(null) })),
@@ -69,8 +85,19 @@ it.layer(testLayer)("AssistantService", (it) => {
         assert.equal(profile.modelSelection.instanceId, "codex");
         const project = yield* snapshots.getProjectShellById(profile.projectId);
         assert.isTrue(Option.isSome(project));
+        const collision = yield* service
+          .act({
+            type: "save",
+            projectId: profile.projectId,
+            name: "Replacement",
+            instructions: "Overwrite",
+          })
+          .pipe(Effect.result);
+        assert.equal(collision._tag, "Failure");
+        assert.equal((yield* service.list()).assistants[0]!.name, "Business");
         const update = yield* service.act({
           type: "save",
+          id: profile.id,
           projectId: profile.projectId,
           name: "Operations",
           instructions: "Plan operations.",
@@ -169,6 +196,19 @@ it.layer(testLayer)("AssistantService", (it) => {
       assert.deepEqual(fresh.assistant?.conversationThreadIds, [opened.threadId!]);
       assert.equal(fresh.assistant?.memory, "Launch in October.");
       assert.include(assistantInstructions(fresh.assistant!), "handmade furniture");
+      const adoption = yield* service
+        .act({
+          type: "delegate",
+          id: created.assistant!.id,
+          threadId: opened.threadId!,
+          title: "Hidden task",
+          prompt: "Research",
+        })
+        .pipe(Effect.result);
+      assert.equal(adoption._tag, "Failure");
+      assert.isFalse(
+        (yield* service.list()).tasks.some((task) => task.threadId === opened.threadId),
+      );
     }),
   );
 
@@ -288,6 +328,29 @@ it.layer(testLayer)("AssistantService", (it) => {
       )!;
       assert.equal(owned.assistantId, id);
       assert.equal(owned.thread?.modelSelection.instanceId, "codex");
+      yield* session(task.threadId!, "ready", "resume-original-provider");
+      const incompatible = yield* service
+        .act({
+          type: "delegate",
+          id,
+          threadId: task.threadId!,
+          title: "Wrong provider",
+          prompt: "Continue",
+          modelSelection: changed.assistant!.modelSelection,
+        })
+        .pipe(Effect.result);
+      assert.equal(incompatible._tag, "Failure");
+      assert.equal((yield* service.list()).tasks[0]!.title, "Plan");
+      yield* service.act({
+        type: "delegate",
+        id,
+        threadId: task.threadId!,
+        title: "Continue plan",
+        prompt: "Continue",
+      });
+      const continued = (yield* service.list()).tasks[0]!;
+      assert.equal(continued.thread?.modelSelection.instanceId, "codex");
+      assert.equal(continued.title, "Continue plan");
     }),
   );
   it.effect(
@@ -311,6 +374,10 @@ it.layer(testLayer)("AssistantService", (it) => {
           modelSelection: { instanceId, model: "default" },
         });
         const opened = yield* service.act({ type: "open", id: created.assistant!.id });
+        const instructions = assistantInstructions(opened.assistant!, false);
+        assert.notInclude(instructions, "Use assistant_action");
+        assert.include(instructions, "coordination tools are unavailable");
+        assert.include(instructions, "Research");
         assert.equal(
           Option.getOrThrow(yield* snapshots.getThreadShellById(opened.threadId!)).runtimeMode,
           "full-access",

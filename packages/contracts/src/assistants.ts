@@ -82,3 +82,14 @@ export type AssistantActionResult = typeof AssistantActionResult.Type;
 export class AssistantError extends Schema.TaggedError<AssistantError>()("AssistantError", {
   message: Schema.String,
 }) {}
+
+/** Providers whose adapters connect the scoped T3 coordination tools. */
+export function supportsAgentCoordination(driver: string | undefined): boolean {
+  return (
+    driver !== undefined &&
+    ["codex", "claudeAgent", "cursor", "grok", "opencode", "antigravity"].includes(driver)
+  );
+}
+
+export const AGENT_CHAT_ONLY_NOTICE =
+  "This provider supports chat and delegated task execution, but cannot create agents or coordinate tasks from chat. Choose a provider with coordination support for that work.";

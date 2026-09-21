@@ -1,3 +1,4 @@
+import { supportsAgentCoordination } from "@t3tools/contracts";
 import { AssistantRepository } from "../../assistants/AssistantRepository.ts";
 import { assistantInstructions } from "../../assistants/assistantPolicy.ts";
 /**
@@ -1681,10 +1682,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             ),
           )
       : undefined;
-    if (assistant && inputTextWithAttachmentContext !== undefined) {
-      inputTextWithAttachmentContext = `${assistantInstructions(assistant)}\n\n${inputTextWithAttachmentContext}`;
-    }
-    const input = {
+    let input = {
       ...parsed,
       ...(inputTextWithAttachmentContext !== undefined
         ? { input: inputTextWithAttachmentContext }
@@ -1721,6 +1719,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           operation: "ProviderService.sendTurn",
           allowRecovery: true,
         });
+      }
+      if (assistant && inputTextWithAttachmentContext !== undefined) {
+        input = {
+          ...input,
+          input: `${assistantInstructions(assistant, supportsAgentCoordination(routed.adapter.provider))}\n\n${inputTextWithAttachmentContext}`,
+        };
       }
       metricProvider = routed.adapter.provider;
       metricModel = input.modelSelection?.model;

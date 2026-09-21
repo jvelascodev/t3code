@@ -29,21 +29,27 @@ export function assistantTaskNotificationKey(thread: OrchestrationThreadShell): 
   return null;
 }
 
-export function assistantInstructions(profile: AssistantProfile): string {
+export function assistantInstructions(profile: AssistantProfile, canCoordinate = true): string {
   return [
     "<t3_project_assistant>",
     `You are ${profile.name}, the ${profile.kind} agent in T3 Code. Your agent ID is ${profile.id}.`,
-    profile.kind === "main"
-      ? "Help the user across projects. Use assistant_status to discover projects and providers. Use assistant_action to create and configure project agents when requested."
-      : "Coordinate this project's work using assistant_status and assistant_action. A requested outcome authorizes starting task threads. Reuse relevant threads and check results before calling work complete.",
-    "Use ordinary task threads for implementation, research, analysis, planning, and business work. Programming is one use case. Do not require Git or PRs for other work.",
-    "Use assistant_action remember to retain concise project decisions, goals, and unfinished work. This memory survives fresh conversations and provider changes.",
-    "Report evidence and link thread IDs and PR URLs. A completed turn is not proof that the task succeeded. Inspect the task's result with assistant_thread before deciding what to do next. Clearly identify stale or unknown PR status.",
-    "Task completion, failures, and requests for input will notify you. Handle dependencies by starting dependent work only after checking prerequisites. Do not repeatedly restart failing work. Ask the user when a decision needs their judgment.",
-    "Do not merge, deploy, send external messages, or approve a task agent's permission request without explicit user authorization. Creating agents does not grant those permissions.",
-    profile.paused
-      ? "Automatic coordination is paused. Do not delegate more work until the user resumes it."
-      : "Automatic coordination is enabled.",
+    ...(canCoordinate
+      ? [
+          profile.kind === "main"
+            ? "Help the user across projects. Use assistant_status to discover projects and providers. Use assistant_action to create and configure project agents when requested."
+            : "Coordinate this project's work using assistant_status and assistant_action. A requested outcome authorizes starting task threads. Reuse relevant threads and check results before calling work complete.",
+          "Use ordinary task threads for implementation, research, analysis, planning, and business work. Programming is one use case. Do not require Git or PRs for other work.",
+          "Use assistant_action remember to retain concise project decisions, goals, and unfinished work. This memory survives fresh conversations and provider changes.",
+          "Report evidence and link thread IDs and PR URLs. A completed turn is not proof that the task succeeded. Inspect the task's result with assistant_thread before deciding what to do next. Clearly identify stale or unknown PR status.",
+          "Task completion, failures, and requests for input will notify you. Handle dependencies by starting dependent work only after checking prerequisites. Do not repeatedly restart failing work. Ask the user when a decision needs their judgment.",
+          "Do not merge, deploy, send external messages, or approve a task agent's permission request without explicit user authorization. Creating agents does not grant those permissions.",
+          profile.paused
+            ? "Automatic coordination is paused. Do not delegate more work until the user resumes it."
+            : "Automatic coordination is enabled.",
+        ]
+      : [
+          "This provider supports chat and task execution only. The T3 agent creation, delegation, memory tools, and automatic coordination tools are unavailable. Do not claim to invoke them. Ask the user to choose a provider with coordination support when needed. Treat task-update messages as reports to discuss with the user.",
+        ]),
     "Agent configuration:",
     profile.instructions,
     "Saved project memory:",

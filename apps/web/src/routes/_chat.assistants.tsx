@@ -1,3 +1,4 @@
+import { supportsAgentCoordination, AGENT_CHAT_ONLY_NOTICE } from "@t3tools/contracts";
 import { assistantTaskStatus } from "@t3tools/client-runtime/state/assistants";
 import * as Cause from "effect/Cause";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -156,6 +157,11 @@ function AssistantWorkspace({ environmentId }: { environmentId: EnvironmentId })
               Edit main agent
             </Button>
           )}
+          {main &&
+            !supportsAgentCoordination(
+              providers.find((provider) => provider.instanceId === main.modelSelection.instanceId)
+                ?.driver,
+            ) && <p className="text-xs text-muted-foreground">{AGENT_CHAT_ONLY_NOTICE}</p>}
           {main && <AssistantConversationHistory profile={main} environmentId={environmentId} />}
           <p className="text-xs text-muted-foreground">
             Try: “Create an agent to help with my business and plan next week's priorities.”
@@ -174,7 +180,9 @@ function AssistantWorkspace({ environmentId }: { environmentId: EnvironmentId })
             key={editing === "new" ? "new" : editing.id}
             profile={editing === "new" ? null : editing}
             defaultModel={query.data.defaultModelSelection}
-            projects={projects}
+            projects={projects.filter(
+              (project) => !query.data?.assistants.some((agent) => agent.projectId === project.id),
+            )}
             providers={providers}
             pending={pending}
             onCancel={() => setEditing(null)}
@@ -253,7 +261,18 @@ function AssistantWorkspace({ environmentId }: { environmentId: EnvironmentId })
                           void act({ type: "pause", id: assistant.id, paused: !assistant.paused })
                         }
                       >
-                        {assistant.paused ? "Resume coordination" : "Pause coordination"}
+                        {supportsAgentCoordination(
+                          providers.find(
+                            (provider) =>
+                              provider.instanceId === assistant.modelSelection.instanceId,
+                          )?.driver,
+                        )
+                          ? assistant.paused
+                            ? "Resume coordination"
+                            : "Pause coordination"
+                          : assistant.paused
+                            ? "Resume task updates"
+                            : "Pause task updates"}
                       </Button>
                       <Button
                         variant="ghost"
@@ -274,6 +293,11 @@ function AssistantWorkspace({ environmentId }: { environmentId: EnvironmentId })
                         Remove
                       </Button>
                     </div>
+                    {!supportsAgentCoordination(
+                      providers.find(
+                        (provider) => provider.instanceId === assistant.modelSelection.instanceId,
+                      )?.driver,
+                    ) && <p className="text-xs text-muted-foreground">{AGENT_CHAT_ONLY_NOTICE}</p>}
                     <AssistantConversationHistory
                       profile={assistant}
                       environmentId={environmentId}
@@ -362,6 +386,11 @@ function AssistantWorkspace({ environmentId }: { environmentId: EnvironmentId })
                 (provider) => provider.instanceId === query.data?.defaultModelSelection.instanceId,
               )?.displayName ?? query.data.defaultModelSelection.instanceId}
             </Button>
+            {!supportsAgentCoordination(
+              providers.find(
+                (provider) => provider.instanceId === query.data?.defaultModelSelection.instanceId,
+              )?.driver,
+            ) && <p className="mt-2 text-xs text-muted-foreground">{AGENT_CHAT_ONLY_NOTICE}</p>}
             {defaultOpen && (
               <ModelFields
                 model={query.data.defaultModelSelection}
@@ -437,6 +466,9 @@ function ModelFields({
           ))}
         </select>
       </label>
+      {!supportsAgentCoordination(selected?.driver) && (
+        <p className="w-full text-xs text-muted-foreground">{AGENT_CHAT_ONLY_NOTICE}</p>
+      )}
     </div>
   );
 }

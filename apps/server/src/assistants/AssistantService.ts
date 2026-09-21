@@ -1,3 +1,4 @@
+import { ProviderAdapterRegistry } from "../provider/Services/ProviderAdapterRegistry.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as NodeCrypto from "node:crypto";
@@ -40,6 +41,7 @@ const failure = (message: string) => new AssistantError({ message });
 
 export const make = Effect.gen(function* () {
   const repository = yield* AssistantRepository;
+  const adapters = yield* ProviderAdapterRegistry;
   const engine = yield* OrchestrationEngineService;
   const snapshots = yield* ProjectionSnapshotQuery;
   const settings = yield* ServerSettingsService;
@@ -239,9 +241,11 @@ export const make = Effect.gen(function* () {
     }
     if (action.type === "save") {
       const profiles = yield* repository.list();
-      const existing = action.id
-        ? yield* get(action.id)
-        : profiles.find((p) => p.projectId === action.projectId);
+      const existing = action.id ? yield* get(action.id) : undefined;
+      if (!action.id && profiles.some((p) => p.projectId === action.projectId))
+        return yield* failure(
+          "This project already has an agent. Edit the existing agent instead.",
+        );
       const modelSelection =
         action.modelSelection ??
         existing?.modelSelection ??
@@ -339,18 +343,36 @@ export const make = Effect.gen(function* () {
       return yield* failure(
         "Three tasks are already active. Wait for a result before starting another.",
       );
-    const modelSelection = action.modelSelection ?? profile.modelSelection;
-    yield* validateModel(modelSelection);
     const threadId = action.threadId ?? ThreadId.make(NodeCrypto.randomUUID());
     const existingTask = tasks.find((task) => task.thread_id === threadId);
     const existingThread = shell.threads.find((thread) => thread.id === threadId);
+    const modelSelection =
+      action.modelSelection ?? existingThread?.modelSelection ?? profile.modelSelection;
+    yield* validateModel(modelSelection);
+    if (
+      existingThread?.session &&
+      existingThread.modelSelection.instanceId !== modelSelection.instanceId
+    ) {
+      const current = yield* adapters.getInstanceInfo(existingThread.modelSelection.instanceId);
+      const desired = yield* adapters.getInstanceInfo(modelSelection.instanceId);
+      if (
+        current.driverKind !== desired.driverKind ||
+        current.continuationIdentity.continuationKey !==
+          desired.continuationIdentity.continuationKey
+      )
+        return yield* failure(
+          "This task cannot switch providers. Continue with its existing provider or create a new task.",
+        );
+    }
     if (
       action.threadId &&
       (!existingThread ||
         existingThread.projectId !== profile.projectId ||
         existingThread.archivedAt !== null ||
         (existingTask && existingTask.assistant_id !== profile.id) ||
-        (yield* repository.list()).some((entry) => entry.threadId === threadId))
+        (yield* repository.list()).some(
+          (entry) => entry.threadId === threadId || entry.conversationThreadIds?.includes(threadId),
+        ))
     ) {
       return yield* failure("Choose an active task thread in this agent's project.");
     }

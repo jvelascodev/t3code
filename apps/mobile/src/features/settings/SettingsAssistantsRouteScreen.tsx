@@ -1,3 +1,4 @@
+import { supportsAgentCoordination, AGENT_CHAT_ONLY_NOTICE } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { useEffect, useState } from "react";
 import { Alert, Pressable, View } from "react-native";
@@ -187,17 +188,25 @@ function EnvironmentAssistants({ environmentId }: { environmentId: EnvironmentId
                     title: "Choose a project",
                     options: [
                       { id: "new", text: "Create a workspace", onPress: () => setProjectId(null) },
-                      ...projects.map((project) => ({
-                        id: project.id,
-                        text: project.title,
-                        onPress: () => setProjectId(project.id),
-                      })),
+                      ...projects
+                        .filter(
+                          (project) =>
+                            !query.data?.assistants.some((agent) => agent.projectId === project.id),
+                        )
+                        .map((project) => ({
+                          id: project.id,
+                          text: project.title,
+                          onPress: () => setProjectId(project.id),
+                        })),
                     ],
                   })
                 }
               />
             </SettingsSection>
           )}
+          {!supportsAgentCoordination(
+            providers.find((provider) => provider.instanceId === model.instanceId)?.driver,
+          ) && <Text>{AGENT_CHAT_ONLY_NOTICE}</Text>}
           <SettingsSection title="Provider">
             <SettingsRow
               icon="gearshape"
@@ -262,6 +271,11 @@ function EnvironmentAssistants({ environmentId }: { environmentId: EnvironmentId
           key={assistant.id}
           title={`${assistant.kind === "main" && assistant.name === "Main assistant" ? "Main agent" : assistant.name}${assistant.paused ? " · Paused" : ""}`}
         >
+          {!supportsAgentCoordination(
+            providers.find(
+              (provider) => provider.instanceId === assistant.modelSelection.instanceId,
+            )?.driver,
+          ) && <Text>{AGENT_CHAT_ONLY_NOTICE}</Text>}
           <SettingsRow
             icon="text.bubble"
             label="Open chat"
@@ -276,7 +290,19 @@ function EnvironmentAssistants({ environmentId }: { environmentId: EnvironmentId
           />
           <SettingsRow
             icon="stop.fill"
-            label={assistant.paused ? "Resume coordination" : "Pause coordination"}
+            label={
+              supportsAgentCoordination(
+                providers.find(
+                  (provider) => provider.instanceId === assistant.modelSelection.instanceId,
+                )?.driver,
+              )
+                ? assistant.paused
+                  ? "Resume coordination"
+                  : "Pause coordination"
+                : assistant.paused
+                  ? "Resume task updates"
+                  : "Pause task updates"
+            }
             disabled={busy}
             onPress={() => void act({ type: "pause", id: assistant.id, paused: !assistant.paused })}
           />
@@ -333,6 +359,11 @@ function EnvironmentAssistants({ environmentId }: { environmentId: EnvironmentId
       ))}
       {query.data && (
         <SettingsSection title="New agents">
+          {!supportsAgentCoordination(
+            providers.find(
+              (provider) => provider.instanceId === query.data?.defaultModelSelection.instanceId,
+            )?.driver,
+          ) && <Text>{AGENT_CHAT_ONLY_NOTICE}</Text>}
           <SettingsRow
             icon="gearshape"
             label="Default provider"
