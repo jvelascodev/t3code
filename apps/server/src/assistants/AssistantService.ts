@@ -253,10 +253,29 @@ export const make = Effect.gen(function* () {
       yield* validateModel(modelSelection);
       const projectId =
         action.projectId ?? existing?.projectId ?? (yield* createProject(action.name));
-      if (existing && existing.projectId !== projectId)
-        return yield* failure(
-          "Create an agent for the other project instead of moving its task history.",
-        );
+      const projectChanged = existing !== undefined && existing.projectId !== projectId;
+      if (projectChanged) {
+        if (existing.kind === "main")
+          return yield* failure("The main agent works across projects and cannot be reassigned.");
+        if (
+          profiles.some((profile) => profile.projectId === projectId && profile.id !== existing.id)
+        )
+          return yield* failure("This project already has an agent. Choose another project.");
+        const ownedThreads = [
+          existing.threadId,
+          ...(yield* repository.tasks())
+            .filter((task) => task.assistant_id === existing.id)
+            .map((task) => ThreadId.make(task.thread_id)),
+        ];
+        for (const threadId of ownedThreads) {
+          if (!threadId) continue;
+          const thread = yield* snapshots.getThreadShellById(threadId);
+          if (Option.isSome(thread) && (yield* busy(thread.value)))
+            return yield* failure(
+              "Finish or stop the agent's active work before changing its project.",
+            );
+        }
+      }
       const project = yield* snapshots.getProjectShellById(projectId);
       if (Option.isNone(project)) return yield* failure("The selected project is unavailable.");
       let assistant: AssistantProfile = {
@@ -272,6 +291,22 @@ export const make = Effect.gen(function* () {
         threadId: existing?.threadId ?? null,
         paused: existing?.paused ?? false,
       };
+      if (projectChanged) {
+        assistant = {
+          ...assistant,
+          threadId: null,
+          memory: "",
+          handoff: "",
+          conversationThreadIds: [
+            ...new Set([
+              ...(existing.conversationThreadIds ?? []),
+              ...(existing.threadId ? [existing.threadId] : []),
+            ]),
+          ],
+        };
+        assistant = yield* open(assistant);
+        return { assistant, threadId: assistant.threadId };
+      }
       // A new provider gets a new conversation. Durable memory and task ownership stay with the agent.
       if (
         existing &&

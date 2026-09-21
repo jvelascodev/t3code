@@ -107,3 +107,24 @@ it.effect(
       assert.equal(project.actions(), 1);
     }),
 );
+
+it.effect(
+  "main agents can reassign a project agent but project agents cannot move themselves",
+  () =>
+    Effect.gen(function* () {
+      const action = {
+        type: "save" as const,
+        id: profile.id,
+        projectId: ProjectId.make("new-project"),
+        name: profile.name,
+        instructions: profile.instructions,
+      };
+      const main = yield* makeHarness({ ...profile, kind: "main" });
+      yield* main.call({ action });
+      assert.equal(main.actions(), 1);
+      const project = yield* makeHarness(profile);
+      const rejected = yield* project.call({ action }).pipe(Effect.result);
+      assert.equal(rejected._tag, "Failure");
+      assert.equal(project.actions(), 0);
+    }),
+);

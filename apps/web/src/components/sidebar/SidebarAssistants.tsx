@@ -1,5 +1,5 @@
 import { BotIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -7,6 +7,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { assistants } from "../../state/assistants";
+import { useProjects } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useSidebar } from "../ui/sidebar";
@@ -62,6 +63,16 @@ function EnvironmentAssistants({
   threads: readonly EnvironmentThreadShell[];
   expanded: boolean;
 }) {
+  const projects = useProjects();
+  const projectNames = useMemo(
+    () =>
+      new Map(
+        projects
+          .filter((project) => project.environmentId === environmentId)
+          .map((project) => [project.id, project.title]),
+      ),
+    [projects, environmentId],
+  );
   const query = useEnvironmentQuery(assistants.list({ environmentId, input: {} }));
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -128,13 +139,20 @@ function EnvironmentAssistants({
             aria-current={selected ? "page" : undefined}
             disabled={pending !== null}
             onClick={() => void open(assistant.id)}
-            className={`flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60 ${selected ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-foreground hover:bg-sidebar-accent/60"}`}
+            className={`flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60 ${selected ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-foreground hover:bg-sidebar-accent/60"}`}
           >
             <BotIcon className="size-4 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate">
-              {assistant.kind === "main" && assistant.name === "Main assistant"
-                ? "Main agent"
-                : assistant.name}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">
+                {assistant.kind === "main" && assistant.name === "Main assistant"
+                  ? "Main agent"
+                  : assistant.name}
+              </span>
+              <span className="block truncate text-[11px] leading-4 text-muted-foreground">
+                {assistant.kind === "main"
+                  ? "Across projects"
+                  : (projectNames.get(assistant.projectId) ?? "Project unavailable")}
+              </span>
             </span>
             {status && <span className="shrink-0 text-[10px] text-muted-foreground">{status}</span>}
           </button>
@@ -142,12 +160,17 @@ function EnvironmentAssistants({
       })}
       {query.data && !profiles.some((assistant) => assistant.kind === "main") && (
         <button
-          className="flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-sidebar-foreground hover:bg-sidebar-accent/60"
+          className="flex min-h-9 w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-sidebar-foreground hover:bg-sidebar-accent/60"
           disabled={pending !== null}
           onClick={() => void open()}
         >
-          <BotIcon className="size-4" />
-          Main agent
+          <BotIcon className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">Main agent</span>
+            <span className="block truncate text-[11px] leading-4 text-muted-foreground">
+              Across projects
+            </span>
+          </span>
         </button>
       )}
       {(error || query.error) && (

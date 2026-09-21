@@ -124,7 +124,11 @@ const make = Effect.gen(function* () {
           const detail = yield* snapshots.getThreadDetailSnapshot(threadId, { turnLimit: 3 });
           if (
             Option.isNone(detail) ||
-            (profile.kind !== "main" && detail.value.thread.projectId !== profile.projectId)
+            (profile.kind !== "main" &&
+              detail.value.thread.projectId !== profile.projectId &&
+              !(yield* repository.tasks()).some(
+                (task) => task.assistant_id === profile.id && task.thread_id === threadId,
+              ))
           )
             return yield* failure();
           const thread = detail.value.thread;
