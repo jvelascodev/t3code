@@ -1297,7 +1297,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         PreviewManagerError
       > => {
         const existing = sessions.get(wc.id);
-        if (existing) return Effect.succeed([existing, sessions] as const);
+        if (existing?.debugger.isAttached() && !wc.isDevToolsOpened()) {
+          return Effect.succeed([existing, sessions] as const);
+        }
         if (wc.isDevToolsOpened()) {
           return Effect.fail(
             new PreviewAutomationDevToolsOpenError({
@@ -1313,6 +1315,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           );
         }
         const createControlSession = Effect.fn("PreviewManager.createControlSession")(function* () {
+          // Electron can detach CDP without destroying the guest. Retire the cached
+          // session before attaching again; never replay a failed page action.
+          if (existing) yield* Scope.close(existing.scope, Exit.void).pipe(Effect.ignore);
           const semaphore = yield* Semaphore.make(1);
           const scope = yield* Scope.fork(parentScope, "sequential");
           const wcDebugger = wc.debugger;
@@ -1414,6 +1419,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               ),
               { concurrency: "unbounded", discard: true },
             );
+            if (existing) {
+              const tab = [...(yield* SynchronizedRef.get(tabsRef)).values()].find(
+                (candidate) => candidate.webContentsId === wc.id,
+              );
+              if (tab && tab.colorScheme !== "system") {
+                yield* attemptPromise(
+                  { operation: "restoreColorScheme", webContentsId: wc.id },
+                  () =>
+                    wcDebugger.sendCommand("Emulation.setEmulatedMedia", {
+                      features: [{ name: "prefers-color-scheme", value: tab.colorScheme }],
+                    }),
+                );
+              }
+            }
             return [
               control,
               replaceMap(sessions, (copy) => {
@@ -3649,7 +3668,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           loading: false,
         }
       : {
-          available: true,
+          available: yield* ensureControlSession(wc).pipe(
+            Effect.as(true),
+            Effect.catch(() => Effect.succeed(false)),
+          ),
           visible: true,
           tabId,
           url: wc.getURL() || null,

@@ -663,6 +663,52 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("recovers a detached debugger before reusing the same tab", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const { webContents } = makeFaviconWebContents();
+        let attached = false;
+        let devToolsOpen = false;
+        Object.assign(webContents, { isDevToolsOpened: () => devToolsOpen });
+        const attach = vi.fn(() => {
+          attached = true;
+        });
+        const sendCommand = vi.fn(async (method: string) => {
+          if (!attached) throw new Error("Debugger is not attached");
+          return method === "Runtime.evaluate" ? { result: { value: 42 } } : undefined;
+        });
+        Object.assign((webContents as Electron.WebContents).debugger, {
+          isAttached: () => attached,
+          attach,
+          detach: () => {
+            attached = false;
+          },
+          sendCommand,
+        });
+        fromId.mockReturnValue(webContents as never);
+        yield* manager.createTab("tab_recovery");
+        yield* manager.registerWebview("tab_recovery", 42);
+        yield* manager.automationEvaluate("tab_recovery", { expression: "42" });
+        yield* manager.setColorScheme("tab_recovery", "dark");
+        attached = false;
+        devToolsOpen = true;
+        expect((yield* manager.automationStatus("tab_recovery")).available).toBe(false);
+        devToolsOpen = false;
+        expect((yield* manager.automationStatus("tab_recovery")).available).toBe(true);
+        expect(sendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
+          features: [{ name: "prefers-color-scheme", value: "dark" }],
+        });
+        expect(yield* manager.automationEvaluate("tab_recovery", { expression: "42" })).toBe(42);
+        expect(attach).toHaveBeenCalledTimes(2);
+        attached = false;
+        expect(yield* manager.automationEvaluate("tab_recovery", { expression: "42" })).toBe(42);
+        expect(attach).toHaveBeenCalledTimes(3);
+        yield* manager.closeTab("tab_recovery");
+        expect((yield* manager.automationStatus("tab_recovery")).available).toBe(false);
+      }),
+    ),
+  );
+
   effectIt.effect("reports an unregistered webview as temporarily unavailable", () =>
     withManager((manager) =>
       Effect.gen(function* () {
