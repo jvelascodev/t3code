@@ -1,15 +1,11 @@
-import { BotIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { BotIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon, EllipsisIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import * as Cause from "effect/Cause";
+import { agentName, useAgentManagement } from "../agents/AgentManagement";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { assistants } from "../../state/assistants";
 import { useProjects } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
-import { useEnvironmentQuery } from "../../state/query";
 import { useSidebar } from "../ui/sidebar";
 
 export function SidebarAssistants({ threads }: { threads: readonly EnvironmentThreadShell[] }) {
@@ -32,9 +28,9 @@ export function SidebarAssistants({ threads }: { threads: readonly EnvironmentTh
           Agents
         </button>
         <button
-          aria-label="Manage agents"
+          aria-label="Create an agent"
           className="flex size-7 items-center justify-center rounded-md text-sidebar-foreground/70 hover:bg-sidebar-row-hover focus-visible:outline-2 focus-visible:outline-ring"
-          onClick={() => void navigate({ to: "/assistants" })}
+          onClick={() => void navigate({ to: "/assistants", search: { create: true } })}
         >
           <PlusIcon className="size-3.5" />
         </button>
@@ -73,12 +69,13 @@ function EnvironmentAssistants({
       ),
     [projects, environmentId],
   );
-  const query = useEnvironmentQuery(assistants.list({ environmentId, input: {} }));
-  const navigate = useNavigate();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
   const { isMobile, setOpenMobile } = useSidebar();
-  const [pending, setPending] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const closeAfterNavigation = useCallback(() => {
+    if (isMobile) setOpenMobile(false);
+  }, [isMobile, setOpenMobile]);
+  const management = useAgentManagement(environmentId, closeAfterNavigation);
+  const { query, act, pending, error } = management;
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
   const threadIds = threads
     .filter((thread) => thread.environmentId === environmentId)
     .map((thread) => `${thread.id}:${thread.session?.status}`)
@@ -88,29 +85,7 @@ function EnvironmentAssistants({
     if (threadIds !== undefined) refresh();
   }, [threadIds, refresh]);
   async function open(id?: string) {
-    setPending(id ?? "main");
-    setError(null);
-    try {
-      const result = await runAtomCommand(appAtomRegistry, assistants.act, {
-        environmentId,
-        input: id ? { type: "open", id } : { type: "open-main" },
-      });
-      if (result._tag !== "Success") {
-        const cause = Cause.squash(result.cause);
-        setError(cause instanceof Error ? cause.message : "Could not open agent.");
-        return;
-      }
-      refresh();
-      if (result.value.threadId) {
-        await navigate({
-          to: "/$environmentId/$threadId",
-          params: { environmentId, threadId: result.value.threadId },
-        });
-        if (isMobile) setOpenMobile(false);
-      }
-    } finally {
-      setPending(null);
-    }
+    await act(id ? { type: "open", id } : { type: "open-main" }, true);
   }
   if (!expanded) return null;
   const profiles = [...(query.data?.assistants ?? [])].sort((a, b) =>
@@ -134,34 +109,60 @@ function EnvironmentAssistants({
               ? "Working"
               : null;
         return (
-          <button
+          <div
             key={assistant.id}
-            aria-current={selected ? "page" : undefined}
-            disabled={pending !== null}
-            onClick={() => void open(assistant.id)}
-            className={`flex h-[4.875rem] w-full cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60 ${selected ? "bg-sidebar-row-active text-sidebar-foreground" : "text-sidebar-foreground hover:bg-sidebar-row-hover"}`}
+            className="group/agent relative"
+            onContextMenu={(event) => {
+              event.preventDefault();
+              void management.openMenu(assistant, { x: event.clientX, y: event.clientY });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+                event.preventDefault();
+                const rect = event.currentTarget.getBoundingClientRect();
+                void management.openMenu(assistant, { x: rect.right, y: rect.bottom });
+              }
+            }}
           >
-            <BotIcon className="size-4 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate">
-                {assistant.kind === "main" && assistant.name === "Main assistant"
-                  ? "Main agent"
-                  : assistant.name}
+            <button
+              aria-current={selected ? "page" : undefined}
+              disabled={pending}
+              onClick={() => void open(assistant.id)}
+              className={`flex h-[4.875rem] w-full cursor-pointer items-center gap-2 rounded-md pl-2 pr-9 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60 ${selected ? "bg-sidebar-row-active text-sidebar-foreground" : "text-sidebar-foreground hover:bg-sidebar-row-hover"}`}
+            >
+              <BotIcon className="size-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{agentName(assistant)}</span>
+                <span className="block truncate text-[11px] leading-4 text-muted-foreground">
+                  {assistant.kind === "main"
+                    ? "Across projects"
+                    : assistant.projectLinked === false
+                      ? "No project"
+                      : (projectNames.get(assistant.projectId) ?? "Project unavailable")}
+                </span>
               </span>
-              <span className="block truncate text-[11px] leading-4 text-muted-foreground">
-                {assistant.kind === "main"
-                  ? "Across projects"
-                  : (projectNames.get(assistant.projectId) ?? "Project unavailable")}
-              </span>
-            </span>
-            {status && <span className="shrink-0 text-[10px] text-muted-foreground">{status}</span>}
-          </button>
+              {status && (
+                <span className="shrink-0 text-[10px] text-muted-foreground">{status}</span>
+              )}
+            </button>
+            <button
+              aria-label={`Actions for ${agentName(assistant)}`}
+              disabled={pending}
+              className="absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-row-hover focus-visible:outline-2 focus-visible:outline-ring"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                void management.openMenu(assistant, { x: rect.right, y: rect.bottom });
+              }}
+            >
+              <EllipsisIcon className="size-4" />
+            </button>
+          </div>
         );
       })}
       {query.data && !profiles.some((assistant) => assistant.kind === "main") && (
         <button
-          className="flex h-[4.875rem] w-full cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-sidebar-foreground hover:bg-sidebar-row-hover focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60"
-          disabled={pending !== null}
+          className="flex h-[4.875rem] w-full cursor-pointer items-center gap-2 rounded-md pl-2 pr-9 py-2 text-left text-sm text-sidebar-foreground hover:bg-sidebar-row-hover focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-60"
+          disabled={pending}
           onClick={() => void open()}
         >
           <BotIcon className="size-4 shrink-0" />
@@ -173,6 +174,7 @@ function EnvironmentAssistants({
           </span>
         </button>
       )}
+      {management.dialogs}
       {(error || query.error) && (
         <p role="alert" className="px-2 text-xs text-destructive">
           {error ?? query.error}

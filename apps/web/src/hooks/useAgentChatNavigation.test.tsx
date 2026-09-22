@@ -6,6 +6,7 @@ import { useAgentChatNavigation } from "./useAgentChatNavigation";
 
 const state = vi.hoisted(() => ({
   shells: new Set<string>(),
+  onNavigated: vi.fn(),
   navigate: vi.fn(async (_options: unknown) => {}),
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
@@ -19,7 +20,7 @@ const threadId = ThreadId.make("new-agent-conversation");
 let renderer: ReactTestRenderer;
 let navigation: ReturnType<typeof useAgentChatNavigation>;
 function Probe() {
-  const value = useAgentChatNavigation(environmentId);
+  const value = useAgentChatNavigation(environmentId, state.onNavigated);
   useLayoutEffect(() => {
     navigation = value;
   });
@@ -29,6 +30,7 @@ function Probe() {
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.shells.clear();
+  state.onNavigated.mockReset();
   state.navigate.mockReset();
   state.navigate.mockResolvedValue(undefined);
   await act(() => {
@@ -98,4 +100,30 @@ it("releases pending state after a navigation failure so the user can retry", as
   await act(() => navigation.openChat(threadId));
   expect(navigation.error).toBeNull();
   expect(state.navigate).toHaveBeenCalledTimes(2);
+});
+
+it("keeps its host open while waiting for shell and navigation completion", async () => {
+  let finish!: () => void;
+  state.navigate.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await act(() => navigation.openChat(threadId));
+  expect(state.onNavigated).not.toHaveBeenCalled();
+  state.shells.add(`${environmentId}/${threadId}`);
+  await act(() => renderer.update(<Probe />));
+  expect(state.onNavigated).not.toHaveBeenCalled();
+  await act(async () => {
+    finish();
+  });
+  expect(state.onNavigated).toHaveBeenCalledOnce();
+});
+it("does not close its host when navigation fails", async () => {
+  state.shells.add(`${environmentId}/${threadId}`);
+  state.navigate.mockRejectedValueOnce(new Error("Navigation failed"));
+  await act(() => navigation.openChat(threadId));
+  expect(state.onNavigated).not.toHaveBeenCalled();
+  expect(navigation.error).toContain("could not be opened");
 });

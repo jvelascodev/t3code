@@ -1,9 +1,13 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useThreadShell } from "../state/entities";
 
-export function useAgentChatNavigation(environmentId: EnvironmentId) {
+export function useAgentChatNavigation(environmentId: EnvironmentId, onNavigated?: () => void) {
+  const onNavigatedRef = useRef(onNavigated);
+  useEffect(() => {
+    onNavigatedRef.current = onNavigated;
+  }, [onNavigated]);
   const navigate = useNavigate();
   const [threadId, setThreadId] = useState<ThreadId | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -23,6 +27,9 @@ export function useAgentChatNavigation(environmentId: EnvironmentId) {
       to: "/$environmentId/$threadId",
       params: { environmentId, threadId },
     })
+      .then(() => {
+        if (!cancelled) onNavigatedRef.current?.();
+      })
       .catch(() => {
         if (!cancelled) setError("The conversation could not be opened. Try opening it again.");
       })

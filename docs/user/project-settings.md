@@ -61,7 +61,10 @@ and other work that does not need Git.
 
 Each project has one agent with its own instructions, saved decisions, and task history.
 On web and desktop, agents have their own sidebar section. Their delegated work stays in
-Project threads. Previous conversations are available from the agent’s history.
+Project threads. Opening Agents takes you directly to your main agent chat. Use **Threads**
+in an agent chat to find previous conversations and delegated tasks. Right-click an agent
+in the sidebar, or use its actions menu, to edit, remove, pause, or start a new conversation.
+The chat actions menu also includes creation and defaults for new agents.
 Ask it to carry out work; delegated tasks appear as ordinary threads you can inspect or stop.
 Results and requests for input return to the project agent. Provider permission prompts
 still apply. Merging, deployment, and external messages require your explicit authorization.
