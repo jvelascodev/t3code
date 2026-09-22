@@ -18,6 +18,7 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
@@ -48,6 +49,7 @@ const client = McpSchema.McpServerClient.of({
 const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(PreviewAutomationBroker.layer),
+  Layer.provideMerge(PreviewManager.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" })),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -619,6 +621,33 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
       expect(reusedSessionResponse.status).toBe(404);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("closes only the requested thread tab without an automation host", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const manager = yield* PreviewManager.PreviewManager;
+    const first = yield* manager.open({ threadId });
+    const second = yield* manager.open({ threadId });
+    const otherThread = ThreadId.make("other-thread");
+    const other = yield* manager.open({ threadId: otherThread });
+    const call = (id: string) =>
+      server
+        .callTool({ name: "preview_close", arguments: { tabId: id } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    expect((yield* call(first.tabId)).isError).not.toBe(true);
+    expect((yield* call(first.tabId)).isError).not.toBe(true);
+    expect((yield* call(other.tabId)).isError).not.toBe(true);
+    expect((yield* manager.list({ threadId })).sessions.map((tab) => tab.tabId)).toEqual([
+      second.tabId,
+    ]);
+    expect(
+      (yield* manager.list({ threadId: otherThread })).sessions.map((tab) => tab.tabId),
+    ).toEqual([other.tabId]);
+  }).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect("registers annotated tools and preserves authenticated request context", () =>

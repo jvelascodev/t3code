@@ -6,6 +6,7 @@ import {
   type PreviewAutomationResponse,
   type PreviewAutomationStreamEvent,
   type PreviewOpenInput,
+  type PreviewListResult,
   type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -14,7 +15,11 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { __resetClientSettingsPersistenceForTests } from "~/hooks/useSettings";
-import { readThreadPreviewState, resetPreviewStateForTests } from "~/previewStateStore";
+import {
+  reconcilePreviewServerSessions,
+  readThreadPreviewState,
+  resetPreviewStateForTests,
+} from "~/previewStateStore";
 import { appAtomRegistry, AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 
 import { PreviewAutomationHosts } from "./PreviewAutomationHosts";
@@ -25,7 +30,9 @@ const mocks = vi.hoisted(() => ({
   open: vi.fn(async (_target: { environmentId: EnvironmentId; input: PreviewOpenInput }) =>
     AsyncResult.success(snapshot),
   ),
-  list: vi.fn(async () => AsyncResult.success(emptyList)),
+  list: vi.fn<() => Promise<AsyncResult.Success<PreviewListResult>>>(async () =>
+    AsyncResult.success(emptyList),
+  ),
   resize: vi.fn(),
   respond:
     vi.fn<
@@ -110,6 +117,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   mocks.getClientSettings.mockReset().mockResolvedValue(savedSettings);
   mocks.respond.mockReset();
+  mocks.list.mockReset().mockResolvedValue(AsyncResult.success(emptyList));
   __resetClientSettingsPersistenceForTests();
   resetPreviewStateForTests();
   appAtomRegistry.set(requestsAtom, AsyncResult.initial(false));
@@ -135,6 +143,67 @@ afterEach(async () => {
 });
 
 describe("PreviewAutomationHosts open", () => {
+  it("reconciles a cached pinned tab before reporting status and reopens only once", async () => {
+    const stale = { ...snapshot, tabId: "stale-tab" };
+    reconcilePreviewServerSessions(threadRef, { ...emptyList, sessions: [stale] });
+    const send = async (operation: "status" | "open", tabId: string) => {
+      const response = deferred<PreviewAutomationResponse>();
+      mocks.respond.mockImplementationOnce(async ({ input }) => response.resolve(input));
+      await act(async () => {
+        appAtomRegistry.set(
+          requestsAtom,
+          AsyncResult.success({
+            ...requestEvent,
+            request: { ...requestEvent.request, operation, tabId, input: { open: false } },
+          }),
+        );
+        await response.promise;
+      });
+      return response.promise;
+    };
+    expect(await send("status", stale.tabId)).toMatchObject({
+      ok: true,
+      result: { available: false, tabId: null },
+    });
+    expect(readThreadPreviewState(threadRef).sessions).toEqual({});
+    expect(await send("open", stale.tabId)).toMatchObject({
+      ok: true,
+      result: { tabId: snapshot.tabId },
+    });
+    mocks.list.mockResolvedValue(
+      AsyncResult.success({ ...emptyList, revision: 1, sessions: [snapshot] }),
+    );
+    expect(await send("open", snapshot.tabId)).toMatchObject({
+      ok: true,
+      result: { tabId: snapshot.tabId },
+    });
+    expect(mocks.open).toHaveBeenCalledOnce();
+  });
+
+  it("reports an absent tab as unavailable even with a connected bridge", async () => {
+    const response = deferred<PreviewAutomationResponse>();
+    mocks.respond.mockImplementationOnce(async ({ input }) => response.resolve(input));
+    await act(async () => {
+      appAtomRegistry.set(
+        requestsAtom,
+        AsyncResult.success({
+          ...requestEvent,
+          request: {
+            ...requestEvent.request,
+            operation: "status",
+            tabId: "missing-tab",
+            input: {},
+          },
+        }),
+      );
+      await response.promise;
+    });
+    expect(await response.promise).toMatchObject({
+      ok: true,
+      result: { available: false, tabId: null },
+    });
+  });
+
   it("waits for saved settings before opening a tab with the configured profile and viewport", async () => {
     const readStarted = deferred<void>();
     const read = deferred<ClientSettings>();
