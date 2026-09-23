@@ -48,6 +48,13 @@ const ThinkingLevelResponse = Schema.Struct({ level: Schema.String });
 const AvailableThinkingLevels = Schema.Struct({ levels: Schema.Array(AtomicThinkingLevel) });
 const decodeThinkingLevelResponse = Schema.decodeUnknownOption(ThinkingLevelResponse);
 const decodeAvailableThinkingLevels = Schema.decodeUnknownEffect(AvailableThinkingLevels);
+const availableThinkingLevels = (rpc: Rpc) =>
+  rpc.request("get_available_thinking_levels").pipe(
+    Effect.flatMap(decodeAvailableThinkingLevels),
+    Effect.mapError(() =>
+      atomicError("get_available_thinking_levels", "Invalid Atomic thinking levels response"),
+    ),
+  );
 const getState = (rpc: Rpc) =>
   rpc.request("get_state").pipe(
     Effect.flatMap(decodeState),
@@ -61,12 +68,7 @@ const setThinkingLevel = (rpc: Rpc, level: string) =>
         `Unsupported Atomic thinking level: ${level}`,
       );
     // Atomic clamps unsupported levels; reject a stale selection instead.
-    const availableResponse = yield* rpc.request("get_available_thinking_levels");
-    const available = yield* decodeAvailableThinkingLevels(availableResponse).pipe(
-      Effect.mapError(() =>
-        atomicError("get_available_thinking_levels", "Invalid Atomic thinking levels response"),
-      ),
-    );
+    const available = yield* availableThinkingLevels(rpc);
     if (!available.levels.includes(level))
       return yield* atomicError(
         "set_thinking_level",
@@ -84,11 +86,12 @@ const State = Schema.Struct({
   sessionFile: Schema.optional(Schema.String),
   sessionId: Schema.String,
   model: Schema.optional(Schema.Struct({ provider: Schema.String, id: Schema.String })),
-  thinkingLevel: Schema.optional(Schema.String),
+  thinkingLevel: Schema.optional(AtomicThinkingLevel),
 });
 const Resume = Schema.Struct({
   sessionFile: Schema.String,
   baselineThinkingLevel: Schema.optional(AtomicThinkingLevel),
+  baselineModel: Schema.optional(Schema.String),
 });
 const Message = Schema.Struct({
   role: Schema.String,
@@ -320,15 +323,34 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
                 ? `${state.model.provider}/${state.model.id}`
                 : undefined;
             let thinkingLevel: string | undefined = state.thinkingLevel;
-            let baselineThinkingLevel: string | undefined =
-              resume?.baselineThinkingLevel ?? state.thinkingLevel;
+            const resumeBaseline =
+              resume?.baselineModel === undefined || resume.baselineModel === defaultModel
+                ? resume?.baselineThinkingLevel
+                : undefined;
+            let baselineThinkingLevel = resumeBaseline ?? state.thinkingLevel;
+            let baselineModel = defaultModel;
             if (input.modelSelection?.model && input.modelSelection.model !== "default") {
-              if (resume?.baselineThinkingLevel && thinkingLevel !== resume.baselineThinkingLevel)
-                yield* setThinkingLevel(rpc, resume.baselineThinkingLevel);
+              const selectedModel = input.modelSelection.model;
+              if (
+                selectedModel !== defaultModel &&
+                resumeBaseline &&
+                thinkingLevel !== resumeBaseline &&
+                (yield* availableThinkingLevels(rpc)).levels.includes(resumeBaseline)
+              )
+                yield* setThinkingLevel(rpc, resumeBaseline);
               yield* setModel(rpc, input.modelSelection.model);
               const switchedState = yield* getState(rpc);
               thinkingLevel = switchedState.thinkingLevel;
-              baselineThinkingLevel = switchedState.thinkingLevel;
+              baselineThinkingLevel =
+                selectedModel === (resume?.baselineModel ?? defaultModel)
+                  ? (resume?.baselineThinkingLevel ?? switchedState.thinkingLevel)
+                  : switchedState.thinkingLevel;
+              if (
+                baselineThinkingLevel &&
+                !(yield* availableThinkingLevels(rpc)).levels.includes(baselineThinkingLevel)
+              )
+                baselineThinkingLevel = switchedState.thinkingLevel;
+              baselineModel = selectedModel;
             }
             const requestedThinkingLevel = selectedAtomicThinkingLevel(input.modelSelection);
             if (requestedThinkingLevel === ATOMIC_DEFAULT_THINKING_LEVEL) {
@@ -350,6 +372,7 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
                     resumeCursor: {
                       sessionFile: state.sessionFile,
                       ...(baselineThinkingLevel ? { baselineThinkingLevel } : {}),
+                      ...(baselineModel ? { baselineModel } : {}),
                     },
                   }
                 : {}),
@@ -432,6 +455,7 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
                   ...(ctx.baselineThinkingLevel
                     ? { baselineThinkingLevel: ctx.baselineThinkingLevel }
                     : {}),
+                  baselineModel: resolved,
                 },
               };
           }

@@ -7,8 +7,12 @@ if (process.argv.includes("--version")) {
 const emit = (frame) => process.stdout.write(JSON.stringify(frame) + "\n");
 const response = (command, data) =>
   emit({ type: "response", id: command.id, command: command.type, success: true, data });
-let model;
-let thinkingLevel = process.argv.includes("/tmp/resume-high.jsonl") ? "high" : "medium";
+let model = process.argv.includes("/tmp/resume-limited.jsonl") ? "limited" : undefined;
+let thinkingLevel =
+  process.argv.includes("/tmp/resume-high.jsonl") ||
+  process.argv.includes("/tmp/resume-limited.jsonl")
+    ? "high"
+    : "medium";
 const noModels = false;
 const failModels = false;
 for await (const line of createInterface({ input: process.stdin })) {
@@ -19,7 +23,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       sessionFile: process.argv.includes("--session")
         ? process.argv[process.argv.indexOf("--session") + 1]
         : "/tmp/atomic-fixture.jsonl",
-      model: { provider: "fixture", id: "default" },
+      model: { provider: "fixture", id: model ?? "default" },
       thinkingLevel,
     });
   else if (command.type === "get_available_models") {

@@ -130,6 +130,7 @@ it.layer(layer)("Atomic adapter", (it) => {
         expect(session.resumeCursor).toEqual({
           sessionFile: "/tmp/atomic-fixture.jsonl",
           baselineThinkingLevel: "medium",
+          baselineModel: "fixture/test",
         });
         expect(yield* readLevel("fixture/test", "high")).toBe("Thinking level: high");
         expect(yield* readLevel("fixture/test", "default")).toBe("Thinking level: medium");
@@ -142,6 +143,19 @@ it.layer(layer)("Atomic adapter", (it) => {
           resumeCursor: {
             sessionFile: "/tmp/resume-high.jsonl",
             baselineThinkingLevel: "medium",
+            baselineModel: "fixture/test",
+          },
+          modelSelection: selection("fixture/test", "default"),
+        });
+        expect(yield* readLevel("fixture/test", "default")).toBe("Thinking level: medium");
+        yield* adapter.stopSession(threadId);
+        yield* adapter.startSession({
+          threadId,
+          runtimeMode: "full-access",
+          resumeCursor: {
+            sessionFile: "/tmp/resume-limited.jsonl",
+            baselineThinkingLevel: "medium",
+            baselineModel: "fixture/test",
           },
           modelSelection: selection("fixture/test", "default"),
         });
@@ -158,6 +172,7 @@ it.layer(layer)("Atomic adapter", (it) => {
         expect(session.resumeCursor).toEqual({
           sessionFile: "/tmp/atomic-fixture.jsonl",
           baselineThinkingLevel: "medium",
+          baselineModel: "fixture/default",
         });
         const result = yield* adapter.sendTurn({
           threadId,
@@ -167,7 +182,11 @@ it.layer(layer)("Atomic adapter", (it) => {
             model: "fixture/test",
           },
         });
-        expect(result.resumeCursor).toEqual(session.resumeCursor);
+        expect(result.resumeCursor).toEqual({
+          sessionFile: "/tmp/atomic-fixture.jsonl",
+          baselineThinkingLevel: "medium",
+          baselineModel: "fixture/test",
+        });
         const thinking = yield* nextEvent(events, "content.delta");
         expect(thinking.payload).toMatchObject({ streamKind: "reasoning_text", delta: "Thinking" });
         const text = yield* nextEvent(events, "content.delta");
@@ -186,6 +205,7 @@ it.layer(layer)("Atomic adapter", (it) => {
         expect((yield* adapter.listSessions())[0]?.resumeCursor).toEqual({
           sessionFile: "/tmp/resume-specific.jsonl",
           baselineThinkingLevel: "medium",
+          baselineModel: "fixture/default",
         });
       }).pipe(Effect.scoped),
   );
