@@ -101,6 +101,12 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - Bring `secrets` and `settings.json` only if the flow under test needs them.
 - Copy in, never symlink. Data flows one way: into your sandbox, never back out.
 
+## CodeReview
+
+- Mandatory only when you implementing a new feature, fixing a bug, or maken code changes
+  **Review with `scoped-review-loop`.** Follow [.agents/skills/scoped-review-loop/SKILL.md](.agents/skills/scoped-review-loop/SKILL.md) for parallel reviews, independent scope checks, and focused fixes until every review area reaches a scope-adjusted 5/5. Regressions introduced by the implementation remain in scope.
+  s
+
 ## Verifying
 
 - Smallest proof that the change works. `vp test run <files>` for the tests you touched, targeted lint and typecheck for the scope you changed.
