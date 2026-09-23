@@ -163,6 +163,38 @@ it.layer(layer)("Atomic adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect.skipIf(windowsHost)("switches models after Atomic changes its own current model", () =>
+    Effect.gen(function* () {
+      const { adapter, events, threadId } = yield* setup;
+      const selection = (model: string, effort: string) => ({
+        instanceId: ProviderInstanceId.make("atomic-test"),
+        model,
+        options: [{ id: "effort", value: effort }],
+      });
+      yield* adapter.startSession({
+        threadId,
+        runtimeMode: "full-access",
+        modelSelection: selection("fixture/test", "high"),
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "external-model-change",
+        modelSelection: selection("fixture/test", "high"),
+      });
+      yield* nextEvent(events, "turn.completed");
+      yield* adapter.sendTurn({
+        threadId,
+        input: "thinking",
+        modelSelection: selection("fixture/limited", "default"),
+      });
+      yield* nextEvent(events, "content.delta");
+      expect((yield* nextEvent(events, "content.delta")).payload.delta).toBe(
+        "Thinking level: high",
+      );
+      yield* nextEvent(events, "turn.completed");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect.skipIf(windowsHost)(
     "streams text and tool activity, switches models, and retains a resume cursor",
     () =>

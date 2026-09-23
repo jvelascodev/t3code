@@ -75,6 +75,10 @@ for await (const line of createInterface({ input: process.stdin })) {
     thinkingLevel = command.level;
     response(command, { level: thinkingLevel });
   } else if (command.type === "prompt") {
+    if (command.message === "external-model-change") {
+      model = "limited";
+      thinkingLevel = "high";
+    }
     if (command.message === "reject") {
       emit({ type: "response", id: command.id, success: false, error: "Rejected prompt" });
       continue;

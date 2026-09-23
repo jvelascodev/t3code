@@ -108,6 +108,7 @@ type Session = {
   scope: Scope.Closeable;
   rpc: Rpc;
   defaultModel: string | undefined;
+  baselineModel: string | undefined;
   thinkingLevel: string | undefined;
   baselineThinkingLevel: string | undefined;
   itemId: RuntimeItemId;
@@ -384,6 +385,7 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
               scope,
               rpc,
               defaultModel,
+              baselineModel,
               thinkingLevel,
               baselineThinkingLevel,
               itemId: RuntimeItemId.make(NodeCrypto.randomUUID()),
@@ -440,13 +442,24 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
                 "set_model",
                 "Atomic has no configured default model. Choose a model from the catalog.",
               );
-            if (ctx.baselineThinkingLevel && ctx.thinkingLevel !== ctx.baselineThinkingLevel)
-              ctx.thinkingLevel = yield* setThinkingLevel(ctx.rpc, ctx.baselineThinkingLevel);
+            if (ctx.baselineThinkingLevel && ctx.thinkingLevel !== ctx.baselineThinkingLevel) {
+              const currentState = yield* getState(ctx.rpc);
+              const currentModel = currentState.model
+                ? `${currentState.model.provider}/${currentState.model.id}`
+                : undefined;
+              if (
+                currentModel === ctx.baselineModel &&
+                isAtomicThinkingLevel(ctx.baselineThinkingLevel) &&
+                (yield* availableThinkingLevels(ctx.rpc)).levels.includes(ctx.baselineThinkingLevel)
+              )
+                ctx.thinkingLevel = yield* setThinkingLevel(ctx.rpc, ctx.baselineThinkingLevel);
+            }
             yield* setModel(ctx.rpc, resolved);
             const switchedState = yield* getState(ctx.rpc);
             ctx.session = { ...ctx.session, model };
             ctx.thinkingLevel = switchedState.thinkingLevel;
             ctx.baselineThinkingLevel = switchedState.thinkingLevel;
+            ctx.baselineModel = resolved;
             if (ctx.session.resumeCursor && typeof ctx.session.resumeCursor === "object")
               ctx.session = {
                 ...ctx.session,
