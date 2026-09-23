@@ -120,7 +120,7 @@ For authorized mobile verification, a missing or outdated native client is a bui
 
 ## Pull requests
 
-- Never make a PR unless the developer explicitly asks you to do so.
+- **Ship.** Once every review area has a scope-adjusted score of 5/5 for the current diff, no accepted finding remains unresolved, all relevant checks pass, and the required evidence is complete, commit the change, push the task branch, and open a PR. Opening the PR is part of completing an implementation task and does not require a separate user request or confirmation. Follow any explicit user instruction to use a different delivery workflow or stop before publication. Include the problem, resulting behavior, checks run, review findings and scope decisions, risks, and before-and-after evidence in the PR. Finish by presenting the PR URL. Do not merge unless the user requests it.
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
 - UI changes need before/after images. Motion or timing needs a short video.
