@@ -266,6 +266,10 @@
     "./file-preview": {
       "types": "./src/filePreview.ts",
       "default": "./src/filePreview.ts"
+    },
+    "./state/assistants": {
+      "types": "./src/state/assistants.ts",
+      "default": "./src/state/assistants.ts"
     }
   },
   "scripts": {

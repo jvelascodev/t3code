@@ -1,3 +1,6 @@
+import { ProviderAdapterRegistry } from "./provider/Services/ProviderAdapterRegistry.ts";
+import * as AssistantRepository from "./assistants/AssistantRepository.ts";
+import * as AssistantService from "./assistants/AssistantService.ts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -218,7 +221,7 @@ import {
   transferBudgetViolations,
 } from "../integration/TransferBudgetReport.integration.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import { otlpSerializationLayer } from "@t3tools/shared/observability";
+import { DEFAULT_SIGNAL_EXPORT, otlpSerializationLayer } from "@t3tools/shared/observability";
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -578,10 +581,10 @@ const buildAppUnderTest = (options?: {
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
       otlpLogsUrl: undefined,
-      otlpExportIntervalMs: 10_000,
+      otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
+      otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
+      otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
       otlpServiceName: "t3-server",
-      otlpHeaders: undefined,
-      otlpProtocol: "http/json",
       mode: "desktop",
       port: 0,
       host: "127.0.0.1",
@@ -767,6 +770,11 @@ const buildAppUnderTest = (options?: {
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
+          AssistantService.layer.pipe(
+            Layer.provide(Layer.mock(ProviderAdapterRegistry)({})),
+            Layer.provideMerge(AssistantRepository.layer),
+            Layer.provide(SqlitePersistenceMemory),
+          ),
           Layer.mock(Keybindings.Keybindings)({
             loadConfigState: Effect.succeed({
               keybindings: [],
@@ -1076,7 +1084,7 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.browserTraceCollector,
         }),
       ),
-      Layer.provide(otlpSerializationLayer(config.otlpProtocol)),
+      Layer.provide(otlpSerializationLayer(config.otlpTracesExport.protocol)),
       Layer.provide(
         Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({
           publish: (event) => Effect.succeed({ ...(event as any), sequence: 1 }),
@@ -5299,7 +5307,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         config: {
           otlpTracesUrl: collector.url,
-          otlpProtocol: "http/protobuf",
+          otlpTracesExport: { ...DEFAULT_SIGNAL_EXPORT, protocol: "http/protobuf" },
         },
         layers: {
           browserTraceCollector: {
@@ -11369,6 +11377,96 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       if (finalCommand?.type === "thread.turn.start") {
         assert.equal(finalCommand.bootstrap, undefined);
       }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects coordinator workspace changes before bootstrap side effects", () =>
+    Effect.gen(function* () {
+      const dispatched: Array<OrchestrationCommand> = [];
+      const createWorktree = vi.fn(() => Effect.die("Coordinator must not create a worktree"));
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: { createWorktree },
+          projectionSnapshotQuery: {
+            getThreadShellById: (threadId) => {
+              const created = dispatched.find(
+                (command) => command.type === "thread.create" && command.threadId === threadId,
+              );
+              return Effect.succeed(
+                created?.type === "thread.create"
+                  ? Option.some({
+                      ...makeDefaultOrchestrationThreadShell(),
+                      id: threadId,
+                      conversationKind: created.conversationKind,
+                    })
+                  : Option.none(),
+              );
+            },
+            getProjectShellById: () =>
+              Effect.succeed(Option.some(makeDefaultOrchestrationReadModel().projects[0]!)),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command);
+                return { sequence: dispatched.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const saved = yield* client[WS_METHODS.assistantsAct]({
+              type: "save",
+              projectId: defaultProjectId,
+              name: "Coordinator",
+              instructions: "Coordinate tasks",
+            });
+            const opened = yield* client[WS_METHODS.assistantsAct]({
+              type: "open",
+              id: saved.assistant!.id,
+            });
+            const threadId = opened.threadId!;
+            const before = dispatched.length;
+            const rejected = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.turn.start",
+              commandId: CommandId.make("coordinator-worktree"),
+              threadId,
+              message: {
+                messageId: MessageId.make("coordinator-message"),
+                role: "user",
+                text: "Plan work",
+                attachments: [],
+              },
+              modelSelection: defaultModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              bootstrap: {
+                prepareWorktree: {
+                  projectCwd: "/tmp/default-project",
+                  baseBranch: "main",
+                  branch: "coordinator-bad",
+                },
+              },
+              createdAt: "2026-01-01T00:00:00.000Z",
+            }).pipe(Effect.result);
+            assert.equal(rejected._tag, "Failure");
+            assert.equal(dispatched.length, before);
+            assert.equal(createWorktree.mock.calls.length, 0);
+            yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.meta.update",
+              commandId: CommandId.make("ordinary-meta"),
+              threadId: defaultThreadId,
+              worktreePath: "/tmp/task-checkout",
+              branch: "task",
+            });
+            assert.equal(dispatched.length, before + 1);
+          }),
+        ),
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

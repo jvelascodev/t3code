@@ -210,6 +210,20 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 }
 
 const make = Effect.gen(function* () {
+  const assertCoordinatorWorkspace = Effect.fnUntraced(function* (thread: {
+    readonly id: ThreadId;
+    readonly worktreePath: string | null;
+    readonly conversationKind?: "agent" | "task" | undefined;
+  }) {
+    if (thread.worktreePath && thread.conversationKind === "agent") {
+      return yield* new ProviderAdapterRequestError({
+        provider: "agent",
+        method: "thread.turn.start",
+        detail:
+          "Agent conversations must use the project workspace. Reopen the agent to reset its workspace.",
+      });
+    }
+  });
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -480,7 +494,9 @@ const make = Effect.gen(function* () {
     readonly projectId: ProjectId;
     readonly branch: string | null;
     readonly worktreePath: string | null;
+    readonly conversationKind?: "agent" | "task" | undefined;
   }) {
+    yield* assertCoordinatorWorkspace(thread);
     const { worktreePath, branch } = thread;
     if (!worktreePath || !branch) {
       return;
@@ -572,6 +588,7 @@ const make = Effect.gen(function* () {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
     }
 
+    yield* assertCoordinatorWorkspace(thread);
     const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
     const resolveActiveSession = (threadId: ThreadId) =>
@@ -1327,7 +1344,11 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* ensureThreadWorktree(thread);
+    const workspaceReady = yield* ensureThreadWorktree(thread).pipe(
+      Effect.as(true),
+      Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(false))),
+    );
+    if (!workspaceReady) return;
 
     const isCompactCommand = isCompactCommandMessage(message);
     if (!hasOtherUserMessages && !isCompactCommand) {

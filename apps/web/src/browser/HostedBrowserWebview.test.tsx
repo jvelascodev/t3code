@@ -33,6 +33,10 @@ vi.mock("~/components/preview/previewBridge", () => ({
   },
 }));
 
+vi.mock("~/components/preview/usePreviewSession", () => ({
+  usePreviewSession: () => undefined,
+}));
+
 vi.mock("~/components/preview/usePreviewBridge", () => ({
   usePreviewBridge: () => undefined,
 }));

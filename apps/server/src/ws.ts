@@ -1,3 +1,4 @@
+import { AssistantService } from "./assistants/AssistantService.ts";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -146,7 +147,7 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
+import { requiredScopeForRpcMethod, requiredScopeForDeviceList } from "./auth/RpcAuthorization.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
@@ -654,6 +655,7 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const assistants = yield* AssistantService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -1751,8 +1753,32 @@ const makeWsRpcLayer = (
                 ),
               );
 
+        const guardedDispatch = Effect.gen(function* () {
+          if (
+            normalizedCommand.type === "thread.turn.start" &&
+            (normalizedCommand.bootstrap?.prepareWorktree ||
+              normalizedCommand.bootstrap?.createThread) &&
+            (yield* projectionSnapshotQuery
+              .getThreadShellById(normalizedCommand.threadId)
+              .pipe(
+                Effect.map(
+                  (thread) => Option.isSome(thread) && thread.value.conversationKind === "agent",
+                ),
+              ))
+          ) {
+            return yield* new OrchestrationDispatchCommandError({
+              message:
+                "Agent conversations use the project workspace. Create a task thread to use a worktree.",
+            });
+          }
+          return yield* dispatchEffect;
+        }).pipe(
+          Effect.mapError((cause) =>
+            toDispatchCommandError(cause, "Could not validate agent workspace"),
+          ),
+        );
         return startup
-          .enqueueCommand(dispatchEffect)
+          .enqueueCommand(guardedDispatch)
           .pipe(
             Effect.mapError((cause) =>
               toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
@@ -2673,6 +2699,10 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "cloud" },
           ),
+        [WS_METHODS.assistantsList]: () =>
+          observeRpcEffect(WS_METHODS.assistantsList, assistants.list()),
+        [WS_METHODS.assistantsAct]: (input) =>
+          observeRpcEffect(WS_METHODS.assistantsAct, assistants.act(input)),
         [WS_METHODS.pullRequestsList]: (input) =>
           observeRpcEffect(WS_METHODS.pullRequestsList, pullRequests.list(input), {
             "rpc.aggregate": "pull-requests",
@@ -3453,10 +3483,23 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.deviceTestHost, deviceService.testHost(input), {
             "rpc.aggregate": "device",
           }),
-        [WS_METHODS.deviceList]: (_input) =>
-          observeRpcEffect(WS_METHODS.deviceList, deviceService.list, {
-            "rpc.aggregate": "device",
-          }),
+        [WS_METHODS.deviceList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deviceList,
+            input.inspectOnly && !input.updateTool
+              ? deviceService.inspect
+              : authorizeEffect(
+                  requiredScopeForDeviceList(input),
+                  input.updateTool
+                    ? deviceService.updateTool(input.updateTool)
+                    : input.retryHostId
+                      ? deviceService.retryHost(input.retryHostId)
+                      : deviceService.list,
+                ),
+            {
+              "rpc.aggregate": "device",
+            },
+          ),
         [WS_METHODS.deviceOpen]: (input) =>
           observeRpcEffect(WS_METHODS.deviceOpen, deviceService.open(input), {
             "rpc.aggregate": "device",

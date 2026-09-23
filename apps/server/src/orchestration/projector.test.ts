@@ -40,73 +40,78 @@ function makeEvent(input: {
 }
 
 describe("orchestration projector", () => {
-  it("applies thread.created events", async () => {
-    const now = "2026-01-01T00:00:00.000Z";
-    const model = createEmptyReadModel(now);
+  it.each([undefined, "task", "agent"] as const)(
+    "replays %s conversation creation",
+    async (conversationKind) => {
+      const now = "2026-01-01T00:00:00.000Z";
+      const model = createEmptyReadModel(now);
 
-    const next = await Effect.runPromise(
-      projectEvent(
-        model,
-        makeEvent({
-          sequence: 1,
-          type: "thread.created",
-          aggregateKind: "thread",
-          aggregateId: "thread-1",
-          occurredAt: now,
-          commandId: "cmd-thread-create",
-          payload: {
-            threadId: "thread-1",
-            projectId: "project-1",
-            title: "demo",
-            modelSelection: {
-              provider: ProviderDriverKind.make("codex"),
-              model: "gpt-5-codex",
+      const next = await Effect.runPromise(
+        projectEvent(
+          model,
+          makeEvent({
+            sequence: 1,
+            type: "thread.created",
+            aggregateKind: "thread",
+            aggregateId: "thread-1",
+            occurredAt: now,
+            commandId: "cmd-thread-create",
+            payload: {
+              threadId: "thread-1",
+              projectId: "project-1",
+              title: "demo",
+              conversationKind,
+              modelSelection: {
+                provider: ProviderDriverKind.make("codex"),
+                model: "gpt-5-codex",
+              },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt: now,
+              updatedAt: now,
             },
-            runtimeMode: "full-access",
-            branch: null,
-            worktreePath: null,
-            createdAt: now,
-            updatedAt: now,
-          },
-        }),
-      ),
-    );
+          }),
+        ),
+      );
 
-    expect(next.snapshotSequence).toBe(1);
-    expect(next.threads).toEqual([
-      {
-        id: "thread-1",
-        projectId: "project-1",
-        title: "demo",
-        modelSelection: {
-          instanceId: "codex",
-          model: "gpt-5-codex",
+      expect(next.snapshotSequence).toBe(1);
+      expect(next.threads).toEqual([
+        {
+          id: "thread-1",
+          projectId: "project-1",
+          title: "demo",
+          conversationKind: conversationKind ?? "task",
+          modelSelection: {
+            instanceId: "codex",
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          pullRequests: [],
+          branchPullRequest: null,
+          latestTurn: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          activeOrderKey: null,
+          settledOverride: null,
+          settledAt: null,
+          unsettledAt: null,
+          snoozedUntil: null,
+          snoozedAt: null,
+          deletedAt: null,
+          messages: [],
+          proposedPlans: [],
+          activities: [],
+          checkpoints: [],
+          session: null,
         },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        pullRequests: [],
-        branchPullRequest: null,
-        latestTurn: null,
-        createdAt: now,
-        updatedAt: now,
-        archivedAt: null,
-        activeOrderKey: null,
-        settledOverride: null,
-        settledAt: null,
-        unsettledAt: null,
-        snoozedUntil: null,
-        snoozedAt: null,
-        deletedAt: null,
-        messages: [],
-        proposedPlans: [],
-        activities: [],
-        checkpoints: [],
-        session: null,
-      },
-    ]);
-  });
+      ]);
+    },
+  );
 
   effectIt.effect("sets and clears branch pull requests without changing manual links", () =>
     Effect.gen(function* () {

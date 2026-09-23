@@ -429,6 +429,7 @@ export function projectEvent(
             runtimeMode: payload.runtimeMode,
             interactionMode: payload.interactionMode,
             branch: payload.branch,
+            conversationKind: payload.conversationKind ?? "task",
             worktreePath: payload.worktreePath,
             pullRequests: [],
             branchPullRequest: null,

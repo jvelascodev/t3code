@@ -13,6 +13,7 @@ import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.t
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
+  coordinatorCodexConfig,
   describeMcpElicitation,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
@@ -1054,6 +1055,70 @@ describe("openCodexThread", () => {
 
       NodeAssert.ok(isCodexAppServerRequestError(error));
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
+    }),
+  );
+});
+
+describe("project coordinator policy", () => {
+  it.effect("uses read-only without approval prompts despite Full access on the conversation", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "coordinator",
+        runtimeMode: "full-access",
+        coordinatorOnly: true,
+        prompt: "Implement the issue",
+      });
+      NodeAssert.equal(params.approvalPolicy, "never");
+      NodeAssert.deepEqual(params.sandboxPolicy, { type: "readOnly" });
+      const ordinary = yield* buildTurnStartParams({
+        threadId: "task",
+        runtimeMode: "full-access",
+        prompt: "Implement the issue",
+      });
+      NodeAssert.deepEqual(ordinary.sandboxPolicy, { type: "dangerFullAccess" });
+    }),
+  );
+  it.effect("restricts new and resumed provider threads and excludes external MCP tools", () =>
+    Effect.gen(function* () {
+      const config = coordinatorCodexConfig({ mcp_servers: { external: {}, "t3-code": {} } });
+      NodeAssert.equal(config["mcp_servers.external.enabled"], false);
+      NodeAssert.deepEqual(config["mcp_servers.t3-code.enabled_tools"], [
+        "assistant_status",
+        "assistant_action",
+        "assistant_thread",
+      ]);
+      for (const tool of ["assistant_status", "assistant_action", "assistant_thread"]) {
+        NodeAssert.equal(config[`mcp_servers.t3-code.tools.${tool}.approval_mode`], "approve");
+      }
+      NodeAssert.equal(config["features.shell_tool"], false);
+      for (const resumeThreadId of [undefined, "old-unrestricted-session"]) {
+        const verify = (params: Record<string, unknown>) => {
+          NodeAssert.equal(params.approvalPolicy, "never");
+          NodeAssert.equal(params.sandbox, "read-only");
+          NodeAssert.deepEqual(params.config, config);
+        };
+        yield* openCodexThread({
+          client: {
+            request: (_method, params) => {
+              verify(params);
+              return Effect.succeed(makeThreadOpenResponse("coordinator"));
+            },
+            raw: {
+              request: (_method, params) => {
+                verify(params);
+                return Effect.succeed(makeThreadOpenResponse("coordinator"));
+              },
+            },
+          },
+          threadId: ThreadId.make("coordinator"),
+          runtimeMode: "full-access",
+          cwd: "/project",
+          requestedModel: undefined,
+          serviceTier: undefined,
+          resumeThreadId,
+          coordinatorConfig: config,
+        });
+      }
     }),
   );
 });

@@ -1,5 +1,7 @@
 import {
   ToolActivityIcon,
+  PreviewError,
+  PreviewTabId,
   PreviewAutomationClickInput,
   PreviewAutomationError,
   PreviewAutomationEvaluateInput,
@@ -25,6 +27,7 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import { PreviewManager } from "../../../preview/Manager.ts";
 import * as ServerConfig from "../../../config.ts";
 
 const dependencies = [
@@ -74,6 +77,25 @@ const PreviewOpenTool = browserTool(
   })
     .annotate(Tool.Title, "Open browser preview")
     .annotate(Tool.Destructive, false),
+);
+
+const PreviewCloseTool = browserTool(
+  Tool.make("preview_close", {
+    description:
+      "Close one collaborative browser tab in this thread, even when its automation host is disconnected. Pass the tabId returned by preview_open or preview_status. Repeated closes are safe; a disconnected desktop removes the tab when it reconnects.",
+    parameters: Schema.Struct({
+      tabId: Schema.String.check(
+        Schema.isTrimmed(),
+        Schema.isNonEmpty(),
+        Schema.isMaxLength(128),
+      ).annotate({ description: "Exact collaborative browser tab to close." }),
+    }),
+    success: Schema.Struct({ tabId: PreviewTabId }),
+    failure: Schema.Union([PreviewAutomationError, PreviewError]),
+    dependencies: [McpInvocationContext.McpInvocationContext, PreviewManager],
+  })
+    .annotate(Tool.Title, "Close browser preview")
+    .annotate(Tool.Idempotent, true),
 );
 
 const PreviewNavigateTool = safeBrowserTool(
@@ -244,6 +266,7 @@ const PreviewRecordingStopTool = safeBrowserTool(
 export const PreviewToolkit = Toolkit.make(
   PreviewStatusTool,
   PreviewOpenTool,
+  PreviewCloseTool,
   PreviewNavigateTool,
   PreviewResizeTool,
   PreviewSetAppearanceTool,
@@ -261,6 +284,7 @@ export const PreviewToolkit = Toolkit.make(
 export const PreviewStandardToolkit = Toolkit.make(
   PreviewStatusTool,
   PreviewOpenTool,
+  PreviewCloseTool,
   PreviewNavigateTool,
   PreviewResizeTool,
   PreviewSetAppearanceTool,

@@ -250,7 +250,7 @@ const currentStatus = async (
   }
   const navStatus = snapshot?.navStatus;
   return {
-    available: Boolean(previewBridge?.automation),
+    available: false,
     visible,
     tabId,
     url: navStatus && navStatus._tag !== "Idle" ? navStatus.url : null,
@@ -339,7 +339,11 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
       const browserActivity = { release: null as (() => void) | null };
       try {
         let state = readThreadPreviewState(threadRef);
-        const needsSessionSync = needsPreviewAutomationSessionSync(state, request.tabId);
+        const needsSessionSync = needsPreviewAutomationSessionSync(
+          state,
+          request.tabId,
+          request.operation,
+        );
         if (needsSessionSync) {
           const listTarget = {
             environmentId,

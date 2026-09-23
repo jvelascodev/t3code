@@ -10,6 +10,7 @@ const response = (command, data) =>
 let model;
 let thinkingLevel = "medium";
 const noModels = false;
+const failModels = false;
 for await (const line of createInterface({ input: process.stdin })) {
   const command = JSON.parse(line);
   if (command.type === "get_state")
@@ -21,7 +22,11 @@ for await (const line of createInterface({ input: process.stdin })) {
       model: { provider: "fixture", id: "default" },
       thinkingLevel,
     });
-  else if (command.type === "get_available_models")
+  else if (command.type === "get_available_models") {
+    if (failModels) {
+      emit({ type: "response", id: command.id, success: false, error: "Unavailable" });
+      continue;
+    }
     response(command, {
       models: noModels
         ? []
@@ -50,7 +55,7 @@ for await (const line of createInterface({ input: process.stdin })) {
             { provider: "fixture", id: "plain", name: "Plain model", reasoning: false },
           ],
     });
-  else if (command.type === "set_model") {
+  } else if (command.type === "set_model") {
     model = command.modelId;
     response(command, {});
   } else if (command.type === "get_available_thinking_levels") {

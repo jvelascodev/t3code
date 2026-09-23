@@ -34,6 +34,14 @@ describe("preview automation target selection", () => {
     expect(needsPreviewAutomationSessionSync(state, "tab-missing")).toBe(true);
   });
 
+  it("refreshes pinned tabs on status and open after a missed close or server restart", () => {
+    const active = snapshot("tab-stale");
+    const state = { snapshot: active, sessions: { [active.tabId]: active } };
+    expect(needsPreviewAutomationSessionSync(state, active.tabId, "status")).toBe(true);
+    expect(needsPreviewAutomationSessionSync(state, active.tabId, "open")).toBe(true);
+    expect(needsPreviewAutomationSessionSync(state, active.tabId, "click")).toBe(false);
+  });
+
   it("does not report the active tab under an unknown requested tab id", () => {
     const active = snapshot("tab-active");
     expect(
