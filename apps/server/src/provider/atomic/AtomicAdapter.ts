@@ -27,6 +27,11 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { ProviderAdapterError } from "../Errors.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { atomicError, makeAtomicRpc, type AtomicFrame } from "./AtomicRpc.ts";
+import {
+  AtomicThinkingLevel,
+  isAtomicThinkingLevel,
+  selectedAtomicThinkingLevel,
+} from "./AtomicThinking.ts";
 
 const setModel = (rpc: Rpc, model: string) => {
   const slash = model.indexOf("/");
@@ -38,11 +43,42 @@ const setModel = (rpc: Rpc, model: string) => {
       });
 };
 
+const ThinkingLevelResponse = Schema.Struct({ level: Schema.String });
+const AvailableThinkingLevels = Schema.Struct({ levels: Schema.Array(AtomicThinkingLevel) });
+const decodeThinkingLevelResponse = Schema.decodeUnknownOption(ThinkingLevelResponse);
+const decodeAvailableThinkingLevels = Schema.decodeUnknownEffect(AvailableThinkingLevels);
+const setThinkingLevel = (rpc: Rpc, level: string) =>
+  Effect.gen(function* () {
+    if (!isAtomicThinkingLevel(level))
+      return yield* atomicError(
+        "set_thinking_level",
+        `Unsupported Atomic thinking level: ${level}`,
+      );
+    // Atomic clamps unsupported levels; reject a stale selection instead.
+    const availableResponse = yield* rpc.request("get_available_thinking_levels");
+    const available = yield* decodeAvailableThinkingLevels(availableResponse).pipe(
+      Effect.mapError(() =>
+        atomicError("get_available_thinking_levels", "Invalid Atomic thinking levels response"),
+      ),
+    );
+    if (!available.levels.includes(level))
+      return yield* atomicError(
+        "set_thinking_level",
+        `The current Atomic model does not support ${level} reasoning effort`,
+      );
+    const response = yield* rpc.request("set_thinking_level", { level });
+    const decoded = decodeThinkingLevelResponse(response);
+    return decoded._tag === "Some" && isAtomicThinkingLevel(decoded.value.level)
+      ? decoded.value.level
+      : level;
+  });
+
 const PROVIDER = ProviderDriverKind.make("atomic");
 const State = Schema.Struct({
   sessionFile: Schema.optional(Schema.String),
   sessionId: Schema.String,
   model: Schema.optional(Schema.Struct({ provider: Schema.String, id: Schema.String })),
+  thinkingLevel: Schema.optional(Schema.String),
 });
 const Resume = Schema.Struct({ sessionFile: Schema.String });
 const Message = Schema.Struct({
@@ -60,6 +96,7 @@ type Session = {
   scope: Scope.Closeable;
   rpc: Rpc;
   defaultModel: string | undefined;
+  thinkingLevel: string | undefined;
   itemId: RuntimeItemId;
   turnId?: TurnId | undefined;
   error?: string | undefined;
@@ -275,9 +312,14 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
               state.model && state.model.provider !== "unknown"
                 ? `${state.model.provider}/${state.model.id}`
                 : undefined;
+            let thinkingLevel: string | undefined = state.thinkingLevel;
             if (input.modelSelection?.model && input.modelSelection.model !== "default") {
               yield* setModel(rpc, input.modelSelection.model);
+              thinkingLevel = undefined;
             }
+            const requestedThinkingLevel = selectedAtomicThinkingLevel(input.modelSelection);
+            if (requestedThinkingLevel)
+              thinkingLevel = yield* setThinkingLevel(rpc, requestedThinkingLevel);
             const now = DateTime.formatIso(DateTime.nowUnsafe());
             const session: ProviderSession = {
               provider: PROVIDER,
@@ -296,6 +338,7 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
               scope,
               rpc,
               defaultModel,
+              thinkingLevel,
               itemId: RuntimeItemId.make(NodeCrypto.randomUUID()),
               aborted: false,
               closed: false,
@@ -352,6 +395,16 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
               );
             yield* setModel(ctx.rpc, resolved);
             ctx.session = { ...ctx.session, model };
+            ctx.thinkingLevel = undefined;
+          }
+          const requestedThinkingLevel = selectedAtomicThinkingLevel(input.modelSelection);
+          if (requestedThinkingLevel && requestedThinkingLevel !== ctx.thinkingLevel) {
+            if (ctx.turnId)
+              return yield* atomicError(
+                "set_thinking_level",
+                "Wait for the current turn before changing reasoning effort",
+              );
+            ctx.thinkingLevel = yield* setThinkingLevel(ctx.rpc, requestedThinkingLevel);
           }
           const steering = Boolean(ctx.turnId);
           const turnId = ctx.turnId ?? TurnId.make(NodeCrypto.randomUUID());

@@ -4,7 +4,6 @@ import {
   TextGenerationError,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as FileSystem from "effect/FileSystem";
 import * as DateTime from "effect/DateTime";
@@ -16,6 +15,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeAtomicAdapter } from "../atomic/AtomicAdapter.ts";
+import { atomicModelCapabilities } from "../atomic/AtomicThinking.ts";
 import { atomicError, makeAtomicRpc } from "../atomic/AtomicRpc.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -31,13 +31,15 @@ import {
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 
 const DRIVER = ProviderDriverKind.make("atomic");
-const capabilities = createModelCapabilities({ optionDescriptors: [] });
+const defaultCapabilities = atomicModelCapabilities({});
 const Models = Schema.Struct({
   models: Schema.Array(
     Schema.Struct({
       id: Schema.String,
       provider: Schema.String,
       name: Schema.String,
+      reasoning: Schema.optional(Schema.Boolean),
+      thinkingLevelMap: Schema.optional(Schema.Record(Schema.String, Schema.NullOr(Schema.String))),
     }),
   ),
 });
@@ -78,7 +80,13 @@ export const AtomicDriver: ProviderDriver<AtomicSettings, AtomicDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       let models: ReadonlyArray<ServerProviderModel> = [
-        { slug: "default", name: "Atomic default", isDefault: true, isCustom: false, capabilities },
+        {
+          slug: "default",
+          name: "Atomic default",
+          isDefault: true,
+          isCustom: false,
+          capabilities: defaultCapabilities,
+        },
       ];
       let modelsDiscovered = false;
       const build = (probe: Parameters<typeof buildServerProvider>[0]["probe"]) => ({
@@ -87,7 +95,7 @@ export const AtomicDriver: ProviderDriver<AtomicSettings, AtomicDriverEnv> = {
             presentation,
             enabled,
             checkedAt: DateTime.formatIso(DateTime.nowUnsafe()),
-            models: providerModelsFromSettings(models, config.customModels, capabilities),
+            models: providerModelsFromSettings(models, config.customModels, defaultCapabilities),
             probe,
           }),
         ),
@@ -209,7 +217,7 @@ export const AtomicDriver: ProviderDriver<AtomicSettings, AtomicDriverEnv> = {
               name: model.name,
               subProvider: model.provider,
               isCustom: false,
-              capabilities,
+              capabilities: atomicModelCapabilities(model),
             }));
             yield* snapshot.refresh;
           }).pipe(

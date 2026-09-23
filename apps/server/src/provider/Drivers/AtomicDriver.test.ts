@@ -82,12 +82,38 @@ it.layer(testLayer)("Atomic driver", (it) => {
         yield* instance.refreshModels!();
         const refreshed = yield* instance.snapshot.getSnapshot;
         expect(refreshed.status).toBe("ready");
-        expect(refreshed.models.map((model) => model.slug)).toEqual(["fixture/test"]);
+        expect(refreshed.models.map((model) => model.slug)).toEqual([
+          "fixture/test",
+          "fixture/limited",
+          "fixture/plain",
+        ]);
+        expect(refreshed.models[0]?.capabilities?.optionDescriptors).toEqual([
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "off", label: "Off" },
+              { id: "minimal", label: "Minimal" },
+              { id: "low", label: "Low" },
+              { id: "medium", label: "Medium" },
+              { id: "high", label: "High" },
+              { id: "max", label: "Max" },
+            ],
+          },
+        ]);
+        expect(refreshed.models[1]?.capabilities?.optionDescriptors?.[0]).toMatchObject({
+          options: [
+            { id: "high", label: "High" },
+            { id: "max", label: "Max" },
+          ],
+        });
+        expect(refreshed.models[2]?.capabilities?.optionDescriptors).toEqual([]);
         expect(mergeProviderSnapshot(initial, refreshed).models).toEqual(refreshed.models);
         const fixture = yield* fs.readFileString(binaryPath);
         yield* fs.writeFileString(
           binaryPath,
-          fixture.replace('[{ provider: "fixture", id: "test", name: "Test model" }]', "[]"),
+          fixture.replace("const noModels = false;", "const noModels = true;"),
         );
         yield* instance.refreshModels!();
         const empty = yield* instance.snapshot.getSnapshot;

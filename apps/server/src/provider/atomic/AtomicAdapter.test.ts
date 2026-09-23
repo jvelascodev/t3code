@@ -58,6 +58,49 @@ const nextEvent = <T extends ProviderRuntimeEvent["type"]>(
 
 it.layer(layer)("Atomic adapter", (it) => {
   it.effect.skipIf(windowsHost)(
+    "applies selected thinking effort on start, between turns, and resume",
+    () =>
+      Effect.gen(function* () {
+        const { adapter, events, threadId } = yield* setup;
+        const selection = (effort: string) => ({
+          instanceId: ProviderInstanceId.make("atomic-test"),
+          model: "fixture/test",
+          options: [{ id: "effort", value: effort }],
+        });
+        yield* adapter.startSession({
+          threadId,
+          runtimeMode: "full-access",
+          modelSelection: selection("high"),
+        });
+        for (const effort of ["high", "low"] as const) {
+          yield* adapter.sendTurn({
+            threadId,
+            input: "thinking",
+            modelSelection: selection(effort),
+          });
+          yield* nextEvent(events, "content.delta");
+          expect((yield* nextEvent(events, "content.delta")).payload.delta).toBe(
+            `Thinking level: ${effort}`,
+          );
+          yield* nextEvent(events, "turn.completed");
+        }
+        yield* adapter.stopSession(threadId);
+        yield* adapter.startSession({
+          threadId,
+          runtimeMode: "full-access",
+          resumeCursor: { sessionFile: "/tmp/resume-specific.jsonl" },
+          modelSelection: selection("low"),
+        });
+        yield* adapter.sendTurn({ threadId, input: "thinking", modelSelection: selection("low") });
+        yield* nextEvent(events, "content.delta");
+        expect((yield* nextEvent(events, "content.delta")).payload.delta).toBe(
+          "Thinking level: low",
+        );
+        yield* nextEvent(events, "turn.completed");
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
     "streams text and tool activity, switches models, and retains a resume cursor",
     () =>
       Effect.gen(function* () {
@@ -101,6 +144,25 @@ it.layer(layer)("Atomic adapter", (it) => {
         .startSession({ threadId, runtimeMode: "approval-required" })
         .pipe(Effect.flip);
       expect(error.message).toContain("Full access");
+      expect(yield* adapter.listSessions()).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)("rejects a thinking level unsupported by the selected model", () =>
+    Effect.gen(function* () {
+      const { adapter, threadId } = yield* setup;
+      const error = yield* adapter
+        .startSession({
+          threadId,
+          runtimeMode: "full-access",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("atomic-test"),
+            model: "fixture/plain",
+            options: [{ id: "effort", value: "high" }],
+          },
+        })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("does not support high reasoning effort");
       expect(yield* adapter.listSessions()).toEqual([]);
     }).pipe(Effect.scoped),
   );
