@@ -28,6 +28,7 @@ import type { ProviderAdapterError } from "../Errors.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { atomicError, makeAtomicRpc, type AtomicFrame } from "./AtomicRpc.ts";
 import {
+  ATOMIC_DEFAULT_THINKING_LEVEL,
   AtomicThinkingLevel,
   isAtomicThinkingLevel,
   selectedAtomicThinkingLevel,
@@ -47,6 +48,11 @@ const ThinkingLevelResponse = Schema.Struct({ level: Schema.String });
 const AvailableThinkingLevels = Schema.Struct({ levels: Schema.Array(AtomicThinkingLevel) });
 const decodeThinkingLevelResponse = Schema.decodeUnknownOption(ThinkingLevelResponse);
 const decodeAvailableThinkingLevels = Schema.decodeUnknownEffect(AvailableThinkingLevels);
+const getState = (rpc: Rpc) =>
+  rpc.request("get_state").pipe(
+    Effect.flatMap(decodeState),
+    Effect.mapError((cause) => atomicError("get_state", String(cause))),
+  );
 const setThinkingLevel = (rpc: Rpc, level: string) =>
   Effect.gen(function* () {
     if (!isAtomicThinkingLevel(level))
@@ -80,7 +86,10 @@ const State = Schema.Struct({
   model: Schema.optional(Schema.Struct({ provider: Schema.String, id: Schema.String })),
   thinkingLevel: Schema.optional(Schema.String),
 });
-const Resume = Schema.Struct({ sessionFile: Schema.String });
+const Resume = Schema.Struct({
+  sessionFile: Schema.String,
+  baselineThinkingLevel: Schema.optional(AtomicThinkingLevel),
+});
 const Message = Schema.Struct({
   role: Schema.String,
   stopReason: Schema.optional(Schema.String),
@@ -97,6 +106,7 @@ type Session = {
   rpc: Rpc;
   defaultModel: string | undefined;
   thinkingLevel: string | undefined;
+  baselineThinkingLevel: string | undefined;
   itemId: RuntimeItemId;
   turnId?: TurnId | undefined;
   error?: string | undefined;
@@ -304,21 +314,27 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
                   });
                 }),
             });
-            const state = yield* rpc.request("get_state").pipe(
-              Effect.flatMap(decodeState),
-              Effect.mapError((cause) => atomicError("get_state", String(cause))),
-            );
+            const state = yield* getState(rpc);
             const defaultModel =
               state.model && state.model.provider !== "unknown"
                 ? `${state.model.provider}/${state.model.id}`
                 : undefined;
             let thinkingLevel: string | undefined = state.thinkingLevel;
+            let baselineThinkingLevel: string | undefined =
+              resume?.baselineThinkingLevel ?? state.thinkingLevel;
             if (input.modelSelection?.model && input.modelSelection.model !== "default") {
+              if (resume?.baselineThinkingLevel && thinkingLevel !== resume.baselineThinkingLevel)
+                yield* setThinkingLevel(rpc, resume.baselineThinkingLevel);
               yield* setModel(rpc, input.modelSelection.model);
-              thinkingLevel = undefined;
+              const switchedState = yield* getState(rpc);
+              thinkingLevel = switchedState.thinkingLevel;
+              baselineThinkingLevel = switchedState.thinkingLevel;
             }
             const requestedThinkingLevel = selectedAtomicThinkingLevel(input.modelSelection);
-            if (requestedThinkingLevel)
+            if (requestedThinkingLevel === ATOMIC_DEFAULT_THINKING_LEVEL) {
+              if (baselineThinkingLevel && thinkingLevel !== baselineThinkingLevel)
+                thinkingLevel = yield* setThinkingLevel(rpc, baselineThinkingLevel);
+            } else if (requestedThinkingLevel)
               thinkingLevel = yield* setThinkingLevel(rpc, requestedThinkingLevel);
             const now = DateTime.formatIso(DateTime.nowUnsafe());
             const session: ProviderSession = {
@@ -329,7 +345,14 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
               runtimeMode: input.runtimeMode,
               cwd: input.cwd ?? defaultCwd,
               ...(input.modelSelection ? { model: input.modelSelection.model } : {}),
-              ...(state.sessionFile ? { resumeCursor: { sessionFile: state.sessionFile } } : {}),
+              ...(state.sessionFile
+                ? {
+                    resumeCursor: {
+                      sessionFile: state.sessionFile,
+                      ...(baselineThinkingLevel ? { baselineThinkingLevel } : {}),
+                    },
+                  }
+                : {}),
               createdAt: now,
               updatedAt: now,
             };
@@ -339,6 +362,7 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
               rpc,
               defaultModel,
               thinkingLevel,
+              baselineThinkingLevel,
               itemId: RuntimeItemId.make(NodeCrypto.randomUUID()),
               aborted: false,
               closed: false,
@@ -393,18 +417,36 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
                 "set_model",
                 "Atomic has no configured default model. Choose a model from the catalog.",
               );
+            if (ctx.baselineThinkingLevel && ctx.thinkingLevel !== ctx.baselineThinkingLevel)
+              ctx.thinkingLevel = yield* setThinkingLevel(ctx.rpc, ctx.baselineThinkingLevel);
             yield* setModel(ctx.rpc, resolved);
+            const switchedState = yield* getState(ctx.rpc);
             ctx.session = { ...ctx.session, model };
-            ctx.thinkingLevel = undefined;
+            ctx.thinkingLevel = switchedState.thinkingLevel;
+            ctx.baselineThinkingLevel = switchedState.thinkingLevel;
+            if (ctx.session.resumeCursor && typeof ctx.session.resumeCursor === "object")
+              ctx.session = {
+                ...ctx.session,
+                resumeCursor: {
+                  ...ctx.session.resumeCursor,
+                  ...(ctx.baselineThinkingLevel
+                    ? { baselineThinkingLevel: ctx.baselineThinkingLevel }
+                    : {}),
+                },
+              };
           }
           const requestedThinkingLevel = selectedAtomicThinkingLevel(input.modelSelection);
-          if (requestedThinkingLevel && requestedThinkingLevel !== ctx.thinkingLevel) {
+          const targetThinkingLevel =
+            requestedThinkingLevel === ATOMIC_DEFAULT_THINKING_LEVEL
+              ? ctx.baselineThinkingLevel
+              : requestedThinkingLevel;
+          if (targetThinkingLevel && targetThinkingLevel !== ctx.thinkingLevel) {
             if (ctx.turnId)
               return yield* atomicError(
                 "set_thinking_level",
                 "Wait for the current turn before changing reasoning effort",
               );
-            ctx.thinkingLevel = yield* setThinkingLevel(ctx.rpc, requestedThinkingLevel);
+            ctx.thinkingLevel = yield* setThinkingLevel(ctx.rpc, targetThinkingLevel);
           }
           const steering = Boolean(ctx.turnId);
           const turnId = ctx.turnId ?? TurnId.make(NodeCrypto.randomUUID());

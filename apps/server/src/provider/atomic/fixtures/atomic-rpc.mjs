@@ -8,7 +8,7 @@ const emit = (frame) => process.stdout.write(JSON.stringify(frame) + "\n");
 const response = (command, data) =>
   emit({ type: "response", id: command.id, command: command.type, success: true, data });
 let model;
-let thinkingLevel = "medium";
+let thinkingLevel = process.argv.includes("/tmp/resume-high.jsonl") ? "high" : "medium";
 const noModels = false;
 const failModels = false;
 for await (const line of createInterface({ input: process.stdin })) {

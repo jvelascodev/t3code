@@ -3,6 +3,7 @@ import { createModelCapabilities, getModelSelectionStringOptionValue } from "@t3
 import * as Schema from "effect/Schema";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export const ATOMIC_DEFAULT_THINKING_LEVEL = "default";
 export const AtomicThinkingLevel = Schema.Literals(THINKING_LEVELS);
 export const isAtomicThinkingLevel = Schema.is(AtomicThinkingLevel);
 
@@ -29,6 +30,18 @@ export function atomicModelCapabilities(model: {
 
   return createModelCapabilities({
     optionDescriptors:
-      options.length > 1 ? [{ id: "effort", label: "Reasoning", type: "select", options }] : [],
+      options.length > 1
+        ? [
+            {
+              id: "effort",
+              label: "Reasoning",
+              type: "select",
+              options: [
+                { id: ATOMIC_DEFAULT_THINKING_LEVEL, label: "Atomic setting", isDefault: true },
+                ...options,
+              ],
+            },
+          ]
+        : [],
   });
 }

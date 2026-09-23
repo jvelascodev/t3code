@@ -101,12 +101,64 @@ it.layer(layer)("Atomic adapter", (it) => {
   );
 
   it.effect.skipIf(windowsHost)(
+    "restores Atomic's setting after a selected effort, including after resume",
+    () =>
+      Effect.gen(function* () {
+        const { adapter, events, threadId } = yield* setup;
+        const selection = (model: string, effort: string) => ({
+          instanceId: ProviderInstanceId.make("atomic-test"),
+          model,
+          options: [{ id: "effort", value: effort }],
+        });
+        const readLevel = (model: string, effort: string) =>
+          Effect.gen(function* () {
+            yield* adapter.sendTurn({
+              threadId,
+              input: "thinking",
+              modelSelection: selection(model, effort),
+            });
+            yield* nextEvent(events, "content.delta");
+            const level = (yield* nextEvent(events, "content.delta")).payload.delta;
+            yield* nextEvent(events, "turn.completed");
+            return level;
+          });
+        const session = yield* adapter.startSession({
+          threadId,
+          runtimeMode: "full-access",
+          modelSelection: selection("fixture/test", "high"),
+        });
+        expect(session.resumeCursor).toEqual({
+          sessionFile: "/tmp/atomic-fixture.jsonl",
+          baselineThinkingLevel: "medium",
+        });
+        expect(yield* readLevel("fixture/test", "high")).toBe("Thinking level: high");
+        expect(yield* readLevel("fixture/test", "default")).toBe("Thinking level: medium");
+        expect(yield* readLevel("fixture/test", "low")).toBe("Thinking level: low");
+        expect(yield* readLevel("fixture/limited", "default")).toBe("Thinking level: medium");
+        yield* adapter.stopSession(threadId);
+        yield* adapter.startSession({
+          threadId,
+          runtimeMode: "full-access",
+          resumeCursor: {
+            sessionFile: "/tmp/resume-high.jsonl",
+            baselineThinkingLevel: "medium",
+          },
+          modelSelection: selection("fixture/test", "default"),
+        });
+        expect(yield* readLevel("fixture/test", "default")).toBe("Thinking level: medium");
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
     "streams text and tool activity, switches models, and retains a resume cursor",
     () =>
       Effect.gen(function* () {
         const { adapter, events, threadId } = yield* setup;
         const session = yield* adapter.startSession({ threadId, runtimeMode: "full-access" });
-        expect(session.resumeCursor).toEqual({ sessionFile: "/tmp/atomic-fixture.jsonl" });
+        expect(session.resumeCursor).toEqual({
+          sessionFile: "/tmp/atomic-fixture.jsonl",
+          baselineThinkingLevel: "medium",
+        });
         const result = yield* adapter.sendTurn({
           threadId,
           input: "hello",
@@ -133,6 +185,7 @@ it.layer(layer)("Atomic adapter", (it) => {
         });
         expect((yield* adapter.listSessions())[0]?.resumeCursor).toEqual({
           sessionFile: "/tmp/resume-specific.jsonl",
+          baselineThinkingLevel: "medium",
         });
       }).pipe(Effect.scoped),
   );

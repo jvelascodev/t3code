@@ -123,6 +123,7 @@ it.layer(testLayer)("Atomic driver", (it) => {
             label: "Reasoning",
             type: "select",
             options: [
+              { id: "default", label: "Atomic setting", isDefault: true },
               { id: "off", label: "Off" },
               { id: "minimal", label: "Minimal" },
               { id: "low", label: "Low" },
@@ -134,6 +135,7 @@ it.layer(testLayer)("Atomic driver", (it) => {
         ]);
         expect(refreshed.models[1]?.capabilities?.optionDescriptors?.[0]).toMatchObject({
           options: [
+            { id: "default", label: "Atomic setting", isDefault: true },
             { id: "high", label: "High" },
             { id: "max", label: "Max" },
           ],
