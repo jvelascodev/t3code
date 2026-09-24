@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createInterface } from "node:readline";
+import * as NodeReadline from "node:readline";
 if (process.argv.includes("--version")) {
   console.log("1.0.0");
   process.exit(0);
@@ -8,7 +8,24 @@ const emit = (frame) => process.stdout.write(JSON.stringify(frame) + "\n");
 const response = (command, data) =>
   emit({ type: "response", id: command.id, command: command.type, success: true, data });
 let model;
-for await (const line of createInterface({ input: process.stdin })) {
+if (process.argv.includes("early-observer")) {
+  emit({
+    type: "extension_ui_request",
+    method: "setWidget",
+    widgetKey: "t3-atomic-observer",
+    widgetLines: [
+      JSON.stringify({
+        kind: "activity",
+        frame: {
+          kind: "snapshot",
+          availability: "ready",
+          roots: [{ rootRunId: "existing-run", state: "working", reason: "executing" }],
+        },
+      }),
+    ],
+  });
+}
+for await (const line of NodeReadline.createInterface({ input: process.stdin })) {
   const command = JSON.parse(line);
   if (command.type === "get_state")
     response(command, {
@@ -42,6 +59,106 @@ for await (const line of createInterface({ input: process.stdin })) {
         method: "select",
         title: "Choose",
         options: ["A", "B"],
+      });
+      continue;
+    }
+    if (command.message === "tasks") {
+      const observe = (value) =>
+        emit({
+          type: "extension_ui_request",
+          method: "setWidget",
+          widgetKey: "t3-atomic-observer",
+          widgetLines: [JSON.stringify(value)],
+        });
+      observe({
+        kind: "activity",
+        frame: {
+          kind: "snapshot",
+          availability: "ready",
+          roots: [{ rootRunId: "run-1", state: "working", reason: "executing" }],
+        },
+      });
+      observe({
+        kind: "lifecycle",
+        event: {
+          rootRunId: "run-1",
+          runId: "run-1",
+          target: {
+            kind: "stage",
+            runId: "run-1",
+            stageId: "research",
+            stageName: "Research",
+            status: "running",
+          },
+        },
+      });
+      emit({
+        type: "tool_execution_update",
+        toolCallId: "subagent-call",
+        toolName: "subagent",
+        partialResult: {
+          details: {
+            runId: "children-1",
+            results: [
+              {
+                agent: "reviewer",
+                task: "Review the change",
+                status: "continued",
+                progress: {
+                  index: 0,
+                  status: "running",
+                  currentTool: "read",
+                  currentToolArgs: "src/index.ts",
+                  tokens: 42,
+                  toolCount: 1,
+                  durationMs: 150,
+                },
+              },
+            ],
+          },
+        },
+      });
+      emit({ type: "agent_end", messages: [] });
+      observe({
+        kind: "lifecycle",
+        event: {
+          rootRunId: "run-1",
+          runId: "run-1",
+          target: {
+            kind: "stage",
+            runId: "run-1",
+            stageId: "research",
+            stageName: "Research",
+            status: "completed",
+          },
+        },
+      });
+      emit({
+        type: "tool_execution_end",
+        toolCallId: "subagent-call",
+        toolName: "subagent",
+        result: {
+          details: {
+            runId: "children-1",
+            results: [
+              {
+                agent: "reviewer",
+                task: "Review the change",
+                status: "ok",
+                finalOutput: "No issues found",
+                progress: { index: 0, status: "completed" },
+              },
+            ],
+          },
+        },
+      });
+      observe({
+        kind: "lifecycle",
+        event: {
+          rootRunId: "run-1",
+          runId: "run-1",
+          target: { kind: "run", runId: "run-1", status: "completed" },
+        },
       });
       continue;
     }

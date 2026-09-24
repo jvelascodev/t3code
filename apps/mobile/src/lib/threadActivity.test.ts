@@ -3495,6 +3495,57 @@ describe("quiet timeline: nested agents", () => {
     expect(rows[0]?.getFullDetail()).toBe("Reviewer 0 · completed\nReviewer 1 · completed");
   });
 
+  it("shows an Atomic child's latest activity and final result in its mobile card", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-atomic-child"),
+      projectId: ProjectId.make("project-1"),
+      title: "Atomic child",
+      activities: [
+        makeActivity({
+          id: EventId.make("atomic-start"),
+          kind: "task.started",
+          summary: "Subagent started",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          payload: {
+            taskId: "atomic:subagent:call:0",
+            taskType: "subagent",
+            agentKind: "agent",
+            title: "Review the change",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("atomic-progress"),
+          kind: "task.progress",
+          summary: "Subagent progress",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          payload: {
+            taskId: "atomic:subagent:call:0",
+            agentKind: "agent",
+            summary: "Reading src/index.ts",
+            status: "running",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("atomic-complete"),
+          kind: "task.completed",
+          summary: "Subagent completed",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          payload: {
+            taskId: "atomic:subagent:call:0",
+            agentKind: "agent",
+            summary: "No issues found",
+            status: "completed",
+          },
+        }),
+      ],
+    });
+    const rows = buildThreadFeed(thread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(rows[0]?.workEntry.agentSpawn?.agents[0]?.detail).toBe("No issues found");
+    expect(rows[0]?.getFullDetail()).toContain("No issues found");
+  });
+
   it("summarizes a spawn card from the newest member report and the batch outcome", () => {
     type Member = NonNullable<WorkLogEntry["agentSpawn"]>["agents"][number];
     const member = (title: string, status: Member["status"], detail: string, seconds: number) =>
@@ -3535,13 +3586,13 @@ describe("quiet timeline: nested agents", () => {
     });
     expect(
       agentSpawnSummary(workflow([member("Reviewer", "completed", "", 3)]), "failed"),
-    ).toMatchObject({ title: "Reviewer", status: "failed", tone: "failed" });
+    ).toMatchObject({ title: "review", status: "failed", tone: "failed" });
     expect(
       agentSpawnSummary(
         { workflowId: "wf", agentTaskIds: ["wf"], agents: [member("review", undefined, "", 1)] },
         "inProgress",
       ),
-    ).toMatchObject({ title: "Subagents", status: "Working", tone: "working", members: [] });
+    ).toMatchObject({ title: "review", status: "Working", tone: "working", members: [] });
   });
 
   it("treats a Codex child's idle turn end as a finished batch member", () => {

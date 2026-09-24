@@ -4,8 +4,8 @@
  *
  * Visualization rules (from live-test feedback):
  * - Spawn order is stable. Activity and completion update rows in place.
- * - Agent rows reserve three fixed lines for identity, activity, and metrics;
- *   changing data must never change their height.
+ * - Collapsed agent rows reserve three fixed lines for identity, activity, and
+ *   metrics; changing data must never change their height.
  * - Workflow expansion is presentation state. A live run stays expanded when
  *   it settles; older collapsed runs can still be opened at run granularity.
  * - Static status dots, DOM-write elapsed timers, plain token counters.
@@ -136,8 +136,9 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
   );
 }
 
-/** Flat, non-interactive agent status line. No unfold. */
+/** Compact status row with an on-demand view of activity and the final result. */
 function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+  const [open, setOpen] = useState(false);
   const visuals = STATUS_VISUALS[agent.status];
   const statusLabel =
     agent.kind === "subagent_batch" && agent.status === "idle" ? "Idle" : visuals.label;
@@ -153,40 +154,85 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
     agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
+  const hasDetails = Boolean(agent.result || agent.error || agent.recentActivity.length > 0);
 
   return (
-    <div className="grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1">
-      <span className="col-start-1 row-start-1 flex items-center">
-        <StatusDot status={agent.status} />
-      </span>
-      <span className="col-start-2 row-start-1 flex min-w-0 items-baseline gap-2">
-        <span className="min-w-0 truncate text-sm font-medium">{agent.title}</span>
-        {role ? (
-          <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-[.65rem] text-muted-foreground">
-            {role}
-          </span>
-        ) : null}
-      </span>
-      <span className="col-start-3 row-start-1 min-w-14 text-right font-mono text-[.7rem] text-muted-foreground/80">
-        <span className="inline-flex items-center gap-1">
-          <AgentElapsed agent={agent} />
-          {agent.status === "completed" ? (
-            <Check aria-hidden className="size-3 text-success" />
-          ) : null}
-        </span>
-      </span>
-      <span
+    <div>
+      <button
+        type="button"
+        disabled={!hasDetails}
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={hasDetails ? open : undefined}
+        aria-label={`${agent.title}, ${statusLabel}${hasDetails ? `, ${open ? "hide" : "show"} details` : ""}`}
         className={cn(
-          "col-start-2 col-end-4 row-start-2 block truncate text-xs",
-          agent.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground",
+          "grid h-[3.875rem] w-full grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1 text-left",
+          hasDetails &&
+            "hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring",
         )}
       >
-        {activity ?? statusLabel}
-      </span>
-      <span className="col-start-2 col-end-4 row-start-3 truncate font-mono text-[.7rem] tabular-nums text-muted-foreground/70">
-        {metadata.join(" · ")}
-      </span>
-      <span className="sr-only">{statusLabel}</span>
+        <span className="col-start-1 row-start-1 flex items-center">
+          <StatusDot status={agent.status} />
+        </span>
+        <span className="col-start-2 row-start-1 flex min-w-0 items-baseline gap-2">
+          <span className="min-w-0 truncate text-sm font-medium">{agent.title}</span>
+          {role ? (
+            <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-[.65rem] text-muted-foreground">
+              {role}
+            </span>
+          ) : null}
+        </span>
+        <span className="col-start-3 row-start-1 min-w-14 text-right font-mono text-[.7rem] text-muted-foreground/80">
+          <span className="inline-flex items-center gap-1">
+            <AgentElapsed agent={agent} />
+            {agent.status === "completed" ? (
+              <Check aria-hidden className="size-3 text-success" />
+            ) : null}
+            {hasDetails ? (
+              open ? (
+                <ChevronDown aria-hidden className="size-3" />
+              ) : (
+                <ChevronRight aria-hidden className="size-3" />
+              )
+            ) : null}
+          </span>
+        </span>
+        <span
+          className={cn(
+            "col-start-2 col-end-4 row-start-2 block truncate text-xs",
+            agent.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground",
+          )}
+        >
+          {activity ?? statusLabel}
+        </span>
+        <span className="col-start-2 col-end-4 row-start-3 truncate font-mono text-[.7rem] tabular-nums text-muted-foreground/70">
+          {metadata.join(" · ")}
+        </span>
+        <span className="sr-only">{statusLabel}</span>
+      </button>
+      {open && hasDetails ? (
+        <div className="mx-1.5 mb-1 max-h-72 overflow-auto rounded-md border border-border/60 bg-background/60 px-2 py-1.5 text-xs">
+          {agent.recentActivity.length > 0 ? (
+            <div className="space-y-1 text-muted-foreground">
+              {agent.recentActivity.map((entry) => (
+                <p key={`${entry.at}-${entry.summary}`} className="whitespace-pre-wrap break-words">
+                  {entry.summary}
+                </p>
+              ))}
+            </div>
+          ) : null}
+          {agent.result || agent.error ? (
+            <div
+              className={cn(
+                "whitespace-pre-wrap break-words",
+                agent.recentActivity.length > 0 && "mt-2 border-t border-border/60 pt-2",
+                agent.error && "text-destructive-foreground",
+              )}
+            >
+              {agent.error ?? agent.result}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -429,6 +475,11 @@ function ExpandedWorkflowSection({
           <ChevronDown aria-hidden className="size-3" />
         </Button>
       </div>
+      {group.workflow.runHandles?.runId ? (
+        <div className="select-text break-all px-1.5 pt-1 font-mono text-[.65rem] text-muted-foreground/70">
+          {group.workflow.runHandles.runId}
+        </div>
+      ) : null}
       <PhaseRail group={group} />
       {scriptOpen && canShowScript ? (
         <WorkflowScriptView

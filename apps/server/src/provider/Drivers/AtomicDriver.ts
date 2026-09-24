@@ -168,7 +168,17 @@ export const AtomicDriver: ProviderDriver<AtomicSettings, AtomicDriverEnv> = {
             }),
         ),
       );
-      const adapter = yield* makeAtomicAdapter(config, instanceId, env, cwd);
+      const adapter = yield* makeAtomicAdapter(config, instanceId, env, cwd).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER,
+              instanceId,
+              detail: "Failed to load Atomic workflow observer",
+              cause,
+            }),
+        ),
+      );
       const unavailable = (operation: string) =>
         Effect.fail(
           new TextGenerationError({

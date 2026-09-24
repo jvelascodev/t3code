@@ -553,6 +553,8 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const output = commandOutput ? stripTrailingExitCode(commandOutput).output : null;
   if (!taskDetailAsLabel && output) {
     entry.detail = output;
+  } else if (isTaskActivity && !entry.isBackgroundTask && taskSummary) {
+    entry.detail = taskSummary;
   } else if (!taskDetailAsLabel && typeof payload?.detail === "string") {
     const detail = stripTrailingExitCode(payload.detail).output;
     const data = asRecord(payload.data);
@@ -1141,14 +1143,18 @@ export function agentSpawnSummary(
     };
   });
   const tone = agentSpawnTone(batchStatus);
-  // A workflow's coordinator is not a member; before any member reports the
-  // batch has none.
+  // Keep the workflow's name visible even when stages have not appeared yet.
+  const coordinator =
+    spawn.workflowId === null
+      ? undefined
+      : spawn.agents[spawn.agentTaskIds.indexOf(spawn.workflowId)];
   const title =
-    members.length === 0
+    coordinator?.title ??
+    (members.length === 0
       ? "Subagents"
       : members.length === 1
         ? members[0]!.title
-        : `${members.length} subagents`;
+        : `${members.length} subagents`);
   if (tone === "working") {
     const working = members.filter((member) => member.tone === "working");
     const latest = working

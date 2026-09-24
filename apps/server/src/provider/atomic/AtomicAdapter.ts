@@ -27,6 +27,8 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { ProviderAdapterError } from "../Errors.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { atomicError, makeAtomicRpc, type AtomicFrame } from "./AtomicRpc.ts";
+import { AtomicTasks } from "./AtomicTasks.ts";
+import { atomicObserverSource } from "./AtomicObserverSource.ts";
 
 const setModel = (rpc: Rpc, model: string) => {
   const slash = model.indexOf("/");
@@ -66,6 +68,7 @@ type Session = {
   aborted: boolean;
   closed: boolean;
   dialogs: Map<string, string>;
+  tasks: AtomicTasks;
 };
 
 export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
@@ -77,6 +80,13 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const { attachmentsDir } = yield* ServerConfig;
+  const observerDir = yield* fileSystem
+    .makeTempDirectoryScoped({ prefix: "t3-atomic-observer-" })
+    .pipe(Effect.mapError((cause) => atomicError("observer", String(cause))));
+  const observerPath = `${observerDir}/observer.mjs`;
+  yield* fileSystem
+    .writeFileString(observerPath, atomicObserverSource)
+    .pipe(Effect.mapError((cause) => atomicError("observer", String(cause))));
   const ownerScope = yield* Effect.scope;
   const events = yield* Effect.acquireRelease(
     PubSub.unbounded<ProviderRuntimeEvent>(),
@@ -120,6 +130,7 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
   const handle = (ctx: Session, frame: AtomicFrame) =>
     Effect.gen(function* () {
       if (ctx.closed) return;
+      for (const event of ctx.tasks.project(frame)) yield* emit(ctx, event);
       if (frame.type === "extension_ui_request" && frame.id && frame.method) {
         if (["confirm", "select", "input", "editor"].includes(frame.method)) {
           ctx.dialogs.set(frame.id, frame.method);
@@ -236,19 +247,30 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
                 );
           const scope = yield* Scope.fork(ownerScope);
           const args = [
+            "--extension",
+            observerPath,
             "--append-system-prompt",
             buildRuntimeInstructions({ harness: "Atomic" }),
             ...(resume ? ["--session", resume.sessionFile] : []),
           ];
           if (input.title) args.push("--name", input.title);
           let ctx: Session | undefined;
+          const earlyFrames: AtomicFrame[] = [];
+          let ready = false;
           const result = yield* Effect.gen(function* () {
             const rpc = yield* makeAtomicRpc({
               binaryPath: settings.binaryPath,
               args,
               cwd: input.cwd ?? defaultCwd,
               environment,
-              onEvent: (frame) => (ctx ? handle(ctx, frame) : Effect.void),
+              onEvent: (frame) => {
+                if (!ctx || !ready) {
+                  if (earlyFrames.length === 512) earlyFrames.shift();
+                  earlyFrames.push(frame);
+                  return Effect.void;
+                }
+                return handle(ctx, frame);
+              },
               onExit: (error) =>
                 Effect.gen(function* () {
                   const current = ctx;
@@ -300,12 +322,18 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
               aborted: false,
               closed: false,
               dialogs: new Map(),
+              tasks: new AtomicTasks(),
             };
             sessions.set(input.threadId, ctx);
             yield* emit(ctx, {
               type: "session.started",
               payload: { resume: session.resumeCursor },
             });
+            while (earlyFrames.length > 0) {
+              const frame = earlyFrames.shift();
+              if (frame) yield* handle(ctx, frame);
+            }
+            ready = true;
             return session;
           }).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -362,6 +390,7 @@ export const makeAtomicAdapter = Effect.fn("makeAtomicAdapter")(function* (
             ctx.session = { ...ctx.session, activeTurnId: turnId, status: "running" };
             yield* emit(ctx, { type: "turn.started", payload: {} });
           }
+          ctx.tasks.recordPrompt(input.input ?? "");
           yield* ctx.rpc
             .request("prompt", {
               message: input.input ?? "Describe the attached images.",

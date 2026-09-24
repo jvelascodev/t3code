@@ -25,10 +25,13 @@ export const AtomicFrame = Schema.Struct({
   toolName: Schema.optional(Schema.String),
   args: Schema.optional(Schema.Unknown),
   result: Schema.optional(Schema.Unknown),
+  partialResult: Schema.optional(Schema.Unknown),
   isError: Schema.optional(Schema.Boolean),
   method: Schema.optional(Schema.String),
   title: Schema.optional(Schema.String),
   options: Schema.optional(Schema.Array(Schema.String)),
+  widgetKey: Schema.optional(Schema.String),
+  widgetLines: Schema.optional(Schema.Array(Schema.String)),
 });
 export type AtomicFrame = typeof AtomicFrame.Type;
 const encodeFrame = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));

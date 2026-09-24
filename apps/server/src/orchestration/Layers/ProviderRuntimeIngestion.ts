@@ -822,6 +822,7 @@ export function runtimeEventToActivities(
     }
 
     case "task.completed": {
+      const resultLimit = event.provider === "atomic" ? 4096 : 180;
       return [
         {
           id: event.eventId,
@@ -842,8 +843,8 @@ export function runtimeEventToActivities(
             // summary and keep detail for the preview/expanded body.
             ...(event.payload.summary
               ? {
-                  summary: truncateDetail(event.payload.summary),
-                  detail: truncateDetail(event.payload.summary),
+                  summary: truncateDetail(event.payload.summary, resultLimit),
+                  detail: truncateDetail(event.payload.summary, resultLimit),
                 }
               : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),

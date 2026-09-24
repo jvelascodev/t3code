@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as NodeURL from "node:url";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { ServerConfig } from "../../config.ts";
+import { runtimeEventToActivities } from "../../orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { makeAtomicAdapter } from "./AtomicAdapter.ts";
 
 const decodeSettings = Schema.decodeEffect(AtomicSettings);
@@ -102,6 +103,22 @@ it.layer(layer)("Atomic adapter", (it) => {
         .pipe(Effect.flip);
       expect(error.message).toContain("Full access");
       expect(yield* adapter.listSessions()).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)("retains a workflow snapshot emitted before session setup", () =>
+    Effect.gen(function* () {
+      const { adapter, events, threadId } = yield* setup;
+      yield* adapter.startSession({
+        threadId,
+        runtimeMode: "full-access",
+        title: "early-observer",
+      });
+      yield* nextEvent(events, "session.started");
+      expect((yield* nextEvent(events, "task.started")).payload).toMatchObject({
+        taskId: "atomic:workflow:existing-run",
+        taskType: "local_workflow",
+      });
     }).pipe(Effect.scoped),
   );
 
@@ -199,6 +216,54 @@ it.layer(layer)("Atomic adapter", (it) => {
         expect((yield* nextEvent(events, "turn.completed")).payload.state).toBe("failed");
         expect((yield* nextEvent(events, "session.exited")).payload.exitKind).toBe("error");
         expect(yield* adapter.hasSession(threadId)).toBe(false);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "projects workflow stages and subagent activity after the parent turn",
+    () =>
+      Effect.gen(function* () {
+        const { adapter, events, threadId } = yield* setup;
+        yield* adapter.startSession({ threadId, runtimeMode: "full-access" });
+        yield* adapter.sendTurn({ threadId, input: "tasks" });
+        const workflow = yield* nextEvent(events, "task.started");
+        expect(workflow.payload).toMatchObject({
+          taskId: "atomic:workflow:run-1",
+          taskType: "local_workflow",
+        });
+        const stage = yield* nextEvent(events, "task.started");
+        expect(stage.payload).toMatchObject({
+          taskId: "atomic:workflow:run-1:wf:run-1:stage:research",
+          title: "Research",
+          parentAgentId: "atomic:workflow:run-1",
+        });
+        const child = yield* nextEvent(events, "task.started");
+        expect(child.payload).toMatchObject({
+          taskId: "atomic:subagent:subagent-call:0",
+          role: "reviewer",
+          description: "Review the change",
+        });
+        const progress = yield* nextEvent(events, "task.progress");
+        expect(progress.payload).toMatchObject({
+          summary: "read src/index.ts",
+          lastToolName: "read",
+          typedUsage: { totalTokens: 42 },
+        });
+        yield* nextEvent(events, "turn.completed");
+        const completedStage = yield* nextEvent(events, "task.completed");
+        expect(completedStage.payload.taskId).toBe("atomic:workflow:run-1:wf:run-1:stage:research");
+        const completedChild = yield* nextEvent(events, "task.completed");
+        expect(completedChild.payload).toMatchObject({
+          taskId: "atomic:subagent:subagent-call:0",
+          summary: "No issues found",
+        });
+        const retained = runtimeEventToActivities({
+          ...completedChild,
+          payload: { ...completedChild.payload, summary: "x".repeat(5000) },
+        })[0];
+        expect((retained?.payload as { detail?: string } | undefined)?.detail).toHaveLength(4096);
+        const completedWorkflow = yield* nextEvent(events, "task.completed");
+        expect(completedWorkflow.payload.taskId).toBe("atomic:workflow:run-1");
       }).pipe(Effect.scoped),
   );
 });

@@ -106,6 +106,7 @@ export function isActiveSubagentStatus(status: RuntimeSubagentStatus): boolean {
 
 const RECENT_ACTIVITY_LIMIT = 6;
 const SUMMARY_CHAR_LIMIT = 180;
+const RESULT_CHAR_LIMIT = 4096;
 const ROSTER_LIMIT = 100;
 
 /**
@@ -120,8 +121,8 @@ export function isBackgroundTaskActivity(payload: Record<string, unknown>): bool
   return payload.agentKind !== "agent";
 }
 
-function bounded(value: string): string {
-  return value.length <= SUMMARY_CHAR_LIMIT ? value : `${value.slice(0, SUMMARY_CHAR_LIMIT - 1)}…`;
+function bounded(value: string, limit = SUMMARY_CHAR_LIMIT): string {
+  return value.length <= limit ? value : `${value.slice(0, limit - 1)}…`;
 }
 
 /** Appends to the ring buffer, deduping consecutive identical summaries. */
@@ -592,9 +593,9 @@ export function foldSubagentActivities(
         if (isTerminalSubagentStatus(agent.status)) {
           if (summary) {
             if (agent.status === "failed") {
-              agent.error = agent.error ?? bounded(summary);
+              agent.error = agent.error ?? bounded(summary, RESULT_CHAR_LIMIT);
             } else {
-              agent.result = agent.result ?? bounded(summary);
+              agent.result = agent.result ?? bounded(summary, RESULT_CHAR_LIMIT);
             }
           }
           agent.usage = mergeUsageMax(agent.usage, asUsage(payload.typedUsage));
@@ -604,9 +605,9 @@ export function foldSubagentActivities(
         applyStatus(agent, status, at);
         if (summary) {
           if (status === "failed") {
-            agent.error = agent.error ?? bounded(summary);
+            agent.error = agent.error ?? bounded(summary, RESULT_CHAR_LIMIT);
           } else {
-            agent.result = bounded(summary);
+            agent.result = bounded(summary, RESULT_CHAR_LIMIT);
           }
         }
         agent.usage = mergeUsageMax(agent.usage, asUsage(payload.typedUsage));

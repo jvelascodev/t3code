@@ -293,6 +293,21 @@ describe("foldSubagentActivities", () => {
     expect(new Set(summaries).size).toBe(summaries.length);
   });
 
+  it("keeps a readable final result while bounding persisted detail", () => {
+    const result = `Summary\n${"Finding. ".repeat(600)}`;
+    const agents = fold([
+      activity("task.started", { taskId: "atomic:subagent:call:0", taskType: "subagent" }),
+      activity("task.completed", {
+        taskId: "atomic:subagent:call:0",
+        status: "completed",
+        summary: result,
+      }),
+    ]);
+    expect(agents[0]!.result).toContain("Finding.");
+    expect(agents[0]!.result!.length).toBe(4096);
+    expect(agents[0]!.result).toMatch(/…$/);
+  });
+
   it("plan tasks are not agents", () => {
     const agents = fold([activity("task.started", { taskId: "plan-1", taskType: "plan" })]);
     expect(agents).toHaveLength(0);
