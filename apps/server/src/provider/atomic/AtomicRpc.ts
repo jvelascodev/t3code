@@ -1,4 +1,5 @@
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -37,12 +38,15 @@ const decodeFrame = Schema.decodeUnknownEffect(Schema.fromJsonString(AtomicFrame
 export const atomicError = (method: string, detail: string) =>
   new ProviderAdapterRequestError({ provider: "atomic", method, detail });
 
+const longLivedRequests = new Set(["prompt", "abort"]);
+
 /** One scoped Atomic process. Only LF delimits RPC frames; Unicode separators are content. */
 export const makeAtomicRpc = Effect.fn("makeAtomicRpc")(function* (options: {
   binaryPath: string;
   args?: ReadonlyArray<string>;
   cwd: string;
   environment: NodeJS.ProcessEnv;
+  requestTimeout?: Duration.Input;
   onEvent?: (frame: AtomicFrame) => Effect.Effect<void>;
   onExit?: (error: ProviderAdapterRequestError) => Effect.Effect<void>;
 }) {
@@ -137,13 +141,17 @@ export const makeAtomicRpc = Effect.fn("makeAtomicRpc")(function* (options: {
       const id = String(++sequence);
       const waiter = yield* Deferred.make<unknown, ProviderAdapterRequestError>();
       pending.set(id, waiter);
-      return yield* write({ ...fields, type, id }).pipe(
-        Effect.andThen(Deferred.await(waiter)),
-        Effect.timeout("30 seconds"),
-        Effect.catchTag("TimeoutError", () => {
-          const error = atomicError(type, "Atomic RPC request timed out");
-          return fail(error).pipe(Effect.andThen(Effect.fail(error)));
-        }),
+      const response = write({ ...fields, type, id }).pipe(Effect.andThen(Deferred.await(waiter)));
+      const withDeadline = longLivedRequests.has(type)
+        ? response
+        : response.pipe(
+            Effect.timeout(options.requestTimeout ?? "30 seconds"),
+            Effect.catchTag("TimeoutError", () => {
+              const error = atomicError(type, "Atomic RPC request timed out");
+              return fail(error).pipe(Effect.andThen(Effect.fail(error)));
+            }),
+          );
+      return yield* withDeadline.pipe(
         Effect.mapError((cause) => atomicError(type, cause.detail)),
         Effect.ensuring(
           Effect.sync(() => {
