@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createInterface } from "node:readline";
+import * as NodeReadline from "node:readline";
 if (process.argv.includes("--version")) {
   console.log("1.0.0");
   process.exit(0);
@@ -15,7 +15,7 @@ let thinkingLevel =
     : "medium";
 const noModels = false;
 const failModels = false;
-for await (const line of createInterface({ input: process.stdin })) {
+for await (const line of NodeReadline.createInterface({ input: process.stdin })) {
   const command = JSON.parse(line);
   if (command.type === "get_state")
     response(command, {
@@ -75,6 +75,14 @@ for await (const line of createInterface({ input: process.stdin })) {
     thinkingLevel = command.level;
     response(command, { level: thinkingLevel });
   } else if (command.type === "prompt") {
+    if (command.message === "pending-rpc") {
+      emit({ type: "pending_rpc", id: command.id });
+      continue;
+    }
+    if (command.message === "slow-rpc") {
+      setTimeout(() => response(command, { accepted: true }), 80);
+      continue;
+    }
     if (command.message === "external-model-change") {
       model = "limited";
       thinkingLevel = "high";
@@ -140,7 +148,10 @@ for await (const line of createInterface({ input: process.stdin })) {
     emit({ type: "agent_end", messages: [] });
   } else if (command.type === "abort") {
     emit({ type: "agent_end", messages: [] });
-    response(command);
+    if (command.delayResponse) setTimeout(() => response(command), 80);
+    else response(command);
+  } else if (command.type === "never_respond") {
+    continue;
   } else if (command.type === "extension_ui_response") {
     emit({
       type: "message_update",
