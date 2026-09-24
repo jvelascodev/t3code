@@ -1,0 +1,18 @@
+diff --git a/android/CMakeLists.txt b/android/CMakeLists.txt
+index 005caaf255529389c2684dbe8fbf0cb099d80e97..aa3df28f9f2f2cd0b108808e0b96ee0feb8a5d11 100644
+--- a/android/CMakeLists.txt
++++ b/android/CMakeLists.txt
+@@ -6,7 +6,7 @@
+-# Find prebuilt oniguruma library
++# Link the Android binary shipped with this package. find_library can select a
++# host libonig from /usr/lib on Linux, which produces an unloadable APK.
+ find_library(LOG_LIB log)
+-find_library(ONIG_LIB onig
+-    PATHS ${CMAKE_CURRENT_SOURCE_DIR}/src/main/jniLibs/${ANDROID_ABI}
+-    NO_CMAKE_FIND_ROOT_PATH
+-    REQUIRED
+-)
++set(ONIG_LIB "${CMAKE_CURRENT_SOURCE_DIR}/src/main/jniLibs/${ANDROID_ABI}/libonig.so")
++if(NOT EXISTS "${ONIG_LIB}")
++    message(FATAL_ERROR "Missing prebuilt Oniguruma library for ${ANDROID_ABI}")
++endif()
