@@ -142,6 +142,14 @@ describe("buildTraitsTriggerDisplay", () => {
       ],
     };
     expect(display([unresolved])).toEqual({ label: "", showFastModeIcon: false });
+    expect(
+      buildTraitsTriggerDisplay({
+        provider: ProviderDriverKind.make("atomic"),
+        descriptors: [{ ...unresolved, label: "Reasoning" }],
+        primarySelectDescriptorId: "effort",
+        ultrathinkPromptControlled: false,
+      }),
+    ).toEqual({ label: "Reasoning", showFastModeIcon: false });
   });
 
   it("still renders the prompt-controlled ultrathink label alongside the bolt", () => {

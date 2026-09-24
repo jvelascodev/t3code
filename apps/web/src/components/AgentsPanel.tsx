@@ -137,7 +137,13 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
 }
 
 /** Compact status row with an on-demand view of activity and the final result. */
-function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+function AgentRow({
+  agent,
+  parentTitle,
+}: {
+  agent: RuntimeSubagent;
+  parentTitle?: string | undefined;
+}) {
   const [open, setOpen] = useState(false);
   const visuals = STATUS_VISUALS[agent.status];
   const statusLabel =
@@ -149,6 +155,7 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
       ? null
       : agent.role;
   const metadata = [
+    parentTitle ? `under ${parentTitle}` : null,
     modelLabel,
     agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
     agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
@@ -434,6 +441,7 @@ function ExpandedWorkflowSection({
 }) {
   const [scriptOpen, setScriptOpen] = useState(false);
   const members = workflowMembers(group);
+  const membersById = new Map(members.map((member) => [member.id, member]));
   const settled = members.filter(
     (member) =>
       member.status === "completed" ||
@@ -443,6 +451,12 @@ function ExpandedWorkflowSection({
   ).length;
   const scriptPath = group.workflow.runHandles?.scriptPath;
   const canShowScript = scriptPath !== undefined && environmentId !== null && threadId !== null;
+  const workflowActivity = agentActivityText(group.workflow);
+  const showWorkflowActivity =
+    workflowActivity !== "Running" ||
+    group.workflow.status === "running" ||
+    group.workflow.status === "pending" ||
+    group.workflow.status === "waiting";
   return (
     <section className="rounded-lg border border-border/50 bg-card/30 p-1.5">
       <div className="flex items-center gap-2 px-1.5 pt-0.5 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
@@ -480,6 +494,13 @@ function ExpandedWorkflowSection({
           {group.workflow.runHandles.runId}
         </div>
       ) : null}
+      {members.length > 0 &&
+      showWorkflowActivity &&
+      workflowActivity &&
+      workflowActivity !== group.workflow.title &&
+      workflowActivity !== group.workflow.workflowName ? (
+        <p className="px-1.5 pt-1 text-xs text-muted-foreground">{workflowActivity}</p>
+      ) : null}
       <PhaseRail group={group} />
       {scriptOpen && canShowScript ? (
         <WorkflowScriptView
@@ -493,7 +514,15 @@ function ExpandedWorkflowSection({
         <PhaseSection key={phase.index} phase={phase} defaultOpen={!workflowIsLive(group)} />
       ))}
       {group.unphasedMembers.map((member) => (
-        <AgentRow key={member.id} agent={member} />
+        <AgentRow
+          key={member.id}
+          agent={member}
+          parentTitle={
+            member.parentAgentId === group.workflow.id
+              ? undefined
+              : membersById.get(member.parentAgentId ?? "")?.title
+          }
+        />
       ))}
       {group.phases.length === 0 && group.unphasedMembers.length === 0 ? (
         <AgentRow agent={group.workflow} />
@@ -539,7 +568,9 @@ function CollapsedWorkflowSection({
         </span>
         <span className="ml-auto flex items-center gap-1.5 font-mono text-[.7rem] text-muted-foreground/80">
           {failed > 0 ? <span className="text-destructive-foreground">{failed} failed</span> : null}
-          <span>{members.length} agents</span>
+          <span>
+            {members.length} {members.length === 1 ? "agent" : "agents"}
+          </span>
           <span className="tabular-nums">· {formatSubagentTokenCount(totalTokens)} tok</span>
           {elapsed ? <span className="tabular-nums">· {elapsed}</span> : null}
           <ChevronRight aria-hidden className="size-3" />

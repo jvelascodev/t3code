@@ -4,6 +4,7 @@ import type { PreviewViewportSetting, ScopedThreadRef } from "@t3tools/contracts
 import { useShallow } from "zustand/react/shallow";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { usePreviewSession } from "~/components/preview/usePreviewSession";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
@@ -93,6 +94,7 @@ export function HostedBrowserWebview(props: {
     (state) => (state.activityByTabId[runtimeTabId] ?? 0) > 0,
   );
   const recordingActive = useActiveBrowserRecordingTabIds().has(runtimeTabId);
+  usePreviewSession(threadRef);
   usePreviewBridge({ threadRef, tabId, runtimeTabId });
 
   useEffect(() => {

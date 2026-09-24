@@ -1,3 +1,5 @@
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
@@ -435,6 +437,67 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(layer),
     );
   });
+
+  it.effect(
+    "limits project coordinators to read and delegation tools without asking permission",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("test-env"),
+          threadId: THREAD_ID,
+          providerSessionId: "coordinator",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          endpoint: "http://localhost/mcp",
+          authorizationHeader: "Bearer test",
+          capabilities: new Set(),
+          coordinatorOnly: true,
+        });
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        const options = harness.getLastCreateQueryInput()!.options;
+        assert.deepEqual(options.tools, ["Read", "Glob", "Grep"]);
+        assert.isTrue(options.strictMcpConfig);
+        assert.deepEqual(options.settingSources, []);
+        assert.deepEqual(options.extraArgs, {});
+        assert.equal(options.permissionMode, "bypassPermissions");
+        for (const tool of ["Bash", "Write", "Edit", "Agent", "mcp__t3-code__preview_evaluate"]) {
+          const result = yield* Effect.promise(() =>
+            options.canUseTool!(
+              tool,
+              {},
+              {
+                signal: new AbortController().signal,
+                requestId: "tool-test",
+                toolUseID: "tool-test",
+              },
+            ),
+          );
+          assert.equal(result?.behavior, "deny");
+        }
+        const allowed = yield* Effect.promise(() =>
+          options.canUseTool!(
+            "mcp__t3-code__assistant_action",
+            { action: "delegate" },
+            {
+              signal: new AbortController().signal,
+              requestId: "delegate-test",
+              toolUseID: "delegate-test",
+            },
+          ),
+        );
+        assert.equal(allowed?.behavior, "allow");
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID))),
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 
   it.effect("derives bypass permission mode from full-access runtime policy", () => {
     const harness = makeHarness();

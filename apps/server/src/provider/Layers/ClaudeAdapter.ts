@@ -4673,6 +4673,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           } satisfies PermissionResult;
         }
 
+        if (McpProviderSession.readMcpProviderSession(input.threadId)?.coordinatorOnly) {
+          const allowed = [
+            "Read",
+            "Glob",
+            "Grep",
+            "mcp__t3-code__assistant_status",
+            "mcp__t3-code__assistant_action",
+            "mcp__t3-code__assistant_thread",
+          ];
+          return allowed.includes(toolName)
+            ? { behavior: "allow" as const, updatedInput: toolInput }
+            : {
+                behavior: "deny" as const,
+                message: "Project coordinators delegate implementation to task threads.",
+              };
+        }
+
         // Handle AskUserQuestion: surface clarifying questions to the
         // user via the user-input runtime event channel, regardless of
         // runtime mode (plan mode relies on this heavily).
@@ -4961,6 +4978,26 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                   },
                 },
               },
+            }
+          : {}),
+        ...(mcpSession?.coordinatorOnly
+          ? {
+              tools: ["Read", "Glob", "Grep"],
+              allowedTools: [
+                "Read",
+                "Glob",
+                "Grep",
+                "mcp__t3-code__assistant_status",
+                "mcp__t3-code__assistant_action",
+                "mcp__t3-code__assistant_thread",
+              ],
+              disallowedTools: ["Bash", "Edit", "Write", "NotebookEdit", "Agent", "Task", "Skill"],
+              strictMcpConfig: true,
+              settingSources: [],
+              settings: { ...settings, disableAllHooks: true },
+              extraArgs: {},
+              permissionMode: "bypassPermissions" as const,
+              allowDangerouslySkipPermissions: true,
             }
           : {}),
       };

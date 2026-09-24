@@ -477,6 +477,22 @@ export function runtimeEventToActivities(
       : {};
   })();
   switch (event.type) {
+    case "session.started": {
+      return event.provider === "atomic"
+        ? [
+            {
+              id: event.eventId,
+              createdAt: event.createdAt,
+              tone: "info",
+              kind: "atomic.session.started",
+              summary: "Atomic session started",
+              payload: { timelineBypass: true },
+              turnId: null,
+              ...maybeSequence,
+            },
+          ]
+        : [];
+    }
     case "request.opened": {
       if (event.payload.requestType === "tool_user_input") {
         return [];

@@ -9,7 +9,7 @@ atomic
 
 Run `/login` in Atomic to connect your model provider. In T3 Code, open **Settings → Providers → Add provider** and choose **Atomic**. Set a binary path if `atomic` is not on the server's PATH.
 
-Choose **Atomic default** to use the CLI's configured model, or refresh the model list in provider settings to discover available models. Custom model IDs use `provider/model-id`. For separate credential directories, set `ATOMIC_CODING_AGENT_DIR` in the provider instance's environment variables and authenticate Atomic with the same setting.
+Choose **Atomic default** to use the CLI's configured model, or refresh the model list in provider settings to discover available models. For discovered models that support reasoning, choose an effort in the composer. Choose **Atomic setting** to return to Atomic's own reasoning level. Custom model IDs use `provider/model-id`. For separate credential directories, set `ATOMIC_CODING_AGENT_DIR` in the provider instance's environment variables and authenticate Atomic with the same setting.
 
 Atomic threads support streamed text and reasoning, tool activity, images, session resume, model switching, interruption, and basic extension questions. In web and desktop, open the Agents panel to follow workflow stages and subagent activity, then expand a row to read recent steps and the final result when Atomic supplies one. On mobile, expand the workflow or subagent card in the thread. Work that continues after the chat turn remains visible. Remote clients receive the same updates from the server.
 

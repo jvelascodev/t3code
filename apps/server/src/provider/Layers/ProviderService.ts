@@ -1,3 +1,6 @@
+import { supportsAgentCoordination } from "@t3tools/contracts";
+import { AssistantRepository } from "../../assistants/AssistantRepository.ts";
+import { assistantInstructions } from "../../assistants/assistantPolicy.ts";
 /**
  * ProviderServiceLive - Cross-provider orchestration layer.
  *
@@ -479,6 +482,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const assistantRepository = yield* Effect.serviceOption(AssistantRepository);
   const projectionQuery = yield* Effect.serviceOption(
     ProjectionSnapshotQuery.ProjectionSnapshotQuery,
   );
@@ -903,10 +907,31 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
+  const coordinatorOnly = Effect.fn("ProviderService.coordinatorOnly")(function* (
+    threadId: ThreadId,
+  ) {
+    if (Option.isNone(assistantRepository)) return false;
+    return yield* assistantRepository.value
+      .isCoordinatorThread(threadId)
+      .pipe(
+        Effect.mapError((cause) =>
+          toValidationError("coordinatorPolicy", "Could not load agent execution policy.", cause),
+        ),
+      );
+  });
+  const validateCoordinatorProvider = (restricted: boolean, provider: string) =>
+    restricted && provider !== "codex" && provider !== "claudeAgent"
+      ? toValidationError(
+          "coordinatorPolicy",
+          "Project coordination requires Codex or Claude. This provider cannot enforce coordination-only tools. Standalone agents and task threads can still use it.",
+        )
+      : Effect.void;
+
   const agentAccessCapabilities = Effect.fn("ProviderService.agentAccessCapabilities")(function* (
     threadId: ThreadId,
   ) {
     const capabilities = new Set<McpInvocationContext.McpCapability>(["pull-requests"]);
+    if (yield* coordinatorOnly(threadId)) return new Set<McpInvocationContext.McpCapability>();
     const access = yield* agentAccessSettings(threadId);
     if (access.browser) capabilities.add("preview");
     if (access.device) capabilities.add("device");
@@ -942,6 +967,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     Effect.gen(function* () {
+      const restricted = yield* coordinatorOnly(threadId);
+      const info = yield* registry.getInstanceInfo(providerInstanceId);
+      yield* validateCoordinatorProvider(restricted, info.driverKind);
       const capabilities = yield* agentAccessCapabilities(threadId);
       const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
       if (credential) {
@@ -951,10 +979,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* Effect.sync(() =>
           McpProviderSession.setMcpProviderSession({
             ...credential.config,
+            coordinatorOnly: restricted,
             ...(deviceEnvironment ? { agentDeviceEnvironment: deviceEnvironment } : {}),
           }),
         );
       }
+      if (restricted && !credential)
+        return yield* toValidationError(
+          "coordinatorPolicy",
+          "Coordination tools are unavailable. Reconnect the environment before starting project work.",
+        );
       return credential;
     });
   const clearMcpSession = (threadId: ThreadId) =>
@@ -1669,7 +1703,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
     }
 
-    const input = {
+    const assistant = Option.isSome(assistantRepository)
+      ? yield* assistantRepository.value
+          .findByThread(parsed.threadId)
+          .pipe(
+            Effect.mapError((cause) =>
+              toValidationError("sendTurn", "Could not load assistant instructions.", cause),
+            ),
+          )
+      : undefined;
+    let input = {
       ...parsed,
       ...(inputTextWithAttachmentContext !== undefined
         ? { input: inputTextWithAttachmentContext }
@@ -1689,6 +1732,21 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         operation: "ProviderService.sendTurn",
         allowRecovery: false,
       });
+      const restricted = yield* coordinatorOnly(input.threadId);
+      yield* validateCoordinatorProvider(restricted, routed.adapter.provider);
+      if (
+        routed.isActive &&
+        (McpProviderSession.readMcpProviderSession(input.threadId)?.coordinatorOnly ?? false) !==
+          restricted
+      ) {
+        yield* routed.adapter.stopSession(input.threadId);
+        yield* clearMcpSession(input.threadId);
+        routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation: "ProviderService.sendTurn",
+          allowRecovery: true,
+        });
+      }
       if (
         input.continuation === true &&
         !input.input &&
@@ -1706,6 +1764,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           operation: "ProviderService.sendTurn",
           allowRecovery: true,
         });
+      }
+      if (assistant && inputTextWithAttachmentContext !== undefined) {
+        input = {
+          ...input,
+          input: `${assistantInstructions(assistant, supportsAgentCoordination(routed.adapter.provider))}\n\n${inputTextWithAttachmentContext}`,
+        };
       }
       metricProvider = routed.adapter.provider;
       metricModel = input.modelSelection?.model;

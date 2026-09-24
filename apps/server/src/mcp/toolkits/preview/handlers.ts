@@ -26,6 +26,7 @@ import {
   toSafeThreadAttachmentSegment,
 } from "../../../attachmentStore.ts";
 import { resolveAttachmentRelativePath } from "../../../attachmentPaths.ts";
+import { PreviewManager } from "../../../preview/Manager.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
@@ -186,7 +187,17 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
   return { ...recording, id: finalId, path: finalPath };
 });
 
+const closePreviewTab = Effect.fn("PreviewToolkit.close")(function* (input: {
+  readonly tabId: PreviewTabId;
+}) {
+  const scope = yield* McpInvocationContext.requireMcpCapability("preview");
+  const manager = yield* PreviewManager;
+  yield* manager.close({ threadId: scope.threadId, tabId: input.tabId });
+  return { tabId: input.tabId };
+});
+
 const handlers = {
+  preview_close: closePreviewTab,
   preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
   preview_open: (input) =>
     invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),

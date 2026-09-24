@@ -118,6 +118,7 @@ function rootActivitySummary(root: typeof WorkflowRoot.Type): string | undefined
   if (root.reason === "stopping") return "Stopping";
   if (root.reason === "paused") return "Paused";
   if (root.reason === "retrying") return "Retrying";
+  if (root.state === "working") return "Running";
   return undefined;
 }
 
@@ -154,10 +155,13 @@ export class AtomicTasks {
   readonly #workflowNames = new Map<string, string>();
   readonly #toolNames = new Map<string, string>();
   readonly #observedRoots = new Set<string>();
+  readonly #active = new Map<RuntimeTaskId, { description: string; taskType: string }>();
+  readonly #failedTool = new Map<RuntimeTaskId, string>();
   #pendingNamedRun: string | undefined;
 
   /** A direct `/workflow name` command names the next new root run. */
   recordPrompt(input: string): void {
+    this.#pendingNamedRun = undefined;
     const name = /^\/workflow\s+([\w-]+)(?:\s|$)/i.exec(input.trim())?.[1];
     if (
       !name ||
@@ -167,6 +171,44 @@ export class AtomicTasks {
     )
       return;
     this.#pendingNamedRun = name;
+  }
+
+  /** A closing Atomic process can no longer report progress for its active tasks. */
+  unavailable(): TaskEvent[] {
+    const events: TaskEvent[] = [...this.#active].map(([taskId, task]) => ({
+      type: "task.progress",
+      payload: {
+        taskId,
+        description: task.description,
+        summary: "Atomic activity unavailable",
+        status: "idle",
+        taskType: task.taskType,
+      },
+    }));
+    this.#active.clear();
+    this.#failedTool.clear();
+    return events;
+  }
+
+  #unavailableMembers(rootRunId: string): TaskEvent[] {
+    const prefix = `${workflowId(rootRunId)}:wf:`;
+    const events: TaskEvent[] = [];
+    for (const [taskId, task] of this.#active) {
+      if (!taskId.startsWith(prefix)) continue;
+      this.#active.delete(taskId);
+      this.#failedTool.delete(taskId);
+      events.push({
+        type: "task.progress",
+        payload: {
+          taskId,
+          description: task.description,
+          summary: "Workflow activity unavailable",
+          status: "idle",
+          taskType: task.taskType,
+        },
+      });
+    }
+    return events;
   }
 
   #start(
@@ -189,20 +231,47 @@ export class AtomicTasks {
       runHandles?: { runId: string };
     },
     reactivated = false,
+    rawStatus?: string,
   ): TaskEvent[] {
     if (!status || (this.#terminal.has(id) && !reactivated)) return [];
-    if (reactivated) this.#terminal.delete(id);
+    if (reactivated) {
+      this.#terminal.delete(id);
+      this.#failedTool.delete(id);
+    }
     const started = this.#start(id, { taskId: id, description: linkage.title, ...linkage });
     if (status === "completed" || status === "failed" || status === "cancelled") {
       this.#terminal.add(id);
+      this.#active.delete(id);
+      const summary =
+        rawStatus === "skipped"
+          ? "Skipped"
+          : rawStatus === "killed"
+            ? "Killed"
+            : rawStatus === "cancelled"
+              ? "Cancelled"
+              : status === "failed"
+                ? this.#failedTool.has(id)
+                  ? `Failed; ${this.#failedTool.get(id)}`
+                  : "Failed"
+                : status === "cancelled"
+                  ? "Stopped"
+                  : "Completed";
+      this.#failedTool.delete(id);
       return [
         ...started,
         {
           type: "task.completed",
-          payload: { taskId: id, status: status === "cancelled" ? "stopped" : status, ...linkage },
+          payload: {
+            taskId: id,
+            status: status === "cancelled" ? "stopped" : status,
+            summary,
+            ...linkage,
+          },
         },
       ];
     }
+    if (status === "idle") this.#active.delete(id);
+    else this.#active.set(id, { description: linkage.title, taskType: linkage.taskType });
     return [...started, { type: "task.updated", payload: { taskId: id, status, ...linkage } }];
   }
 
@@ -217,6 +286,7 @@ export class AtomicTasks {
       const message = decoded.value;
       if (message.kind === "lifecycle") {
         const { rootRunId, target } = message.event;
+        this.#observedRoots.add(rootRunId);
         if (target.kind === "run") {
           if (
             target.runId === rootRunId &&
@@ -244,10 +314,13 @@ export class AtomicTasks {
               runHandles: { runId: target.runId },
             },
             terminalWorkflowStatus(target.previousStatus) && target.status === "running",
+            target.status,
           );
         }
         if (target.kind === "stage" && target.stageId && target.stageName) {
           const parent = workflowId(rootRunId);
+          const owningRun =
+            target.runId === rootRunId ? parent : workflowMemberId(rootRunId, target.runId, "run");
           return [
             ...(this.#started.has(parent)
               ? []
@@ -258,31 +331,47 @@ export class AtomicTasks {
                   taskType: "local_workflow",
                   runHandles: { runId: rootRunId },
                 })),
+            ...(owningRun === parent || this.#started.has(owningRun)
+              ? []
+              : this.#status(owningRun, "running", {
+                  title: `Atomic workflow ${target.runId.slice(0, 8)}`,
+                  taskType: "workflow_stage",
+                  parentAgentId: parent,
+                  runHandles: { runId: target.runId },
+                })),
             ...this.#status(
               workflowMemberId(rootRunId, target.runId, `stage:${target.stageId}`),
               workflowStatus(target.status),
               {
                 title: target.stageName,
                 taskType: "workflow_stage",
-                parentAgentId: parent,
+                parentAgentId: owningRun,
                 workflowName:
                   this.#workflowNames.get(rootRunId) ?? `Atomic workflow ${rootRunId.slice(0, 8)}`,
               },
               terminalWorkflowStatus(target.previousStatus) && target.status === "running",
+              target.status,
             ),
           ];
         }
         if (target.kind === "tool" && target.toolName) {
-          const id = workflowId(rootRunId);
+          const isRoot = target.runId === rootRunId;
+          const id = isRoot
+            ? workflowId(rootRunId)
+            : workflowMemberId(rootRunId, target.runId, "run");
           if (this.#terminal.has(id)) return [];
+          if (target.status === "failed")
+            this.#failedTool.set(id, short(`last failed tool: ${target.toolName}`));
+          else if (target.status === "running") this.#failedTool.delete(id);
           const title =
-            this.#workflowNames.get(rootRunId) ?? `Atomic workflow ${rootRunId.slice(0, 8)}`;
+            this.#workflowNames.get(target.runId) ?? `Atomic workflow ${target.runId.slice(0, 8)}`;
           const started = this.#started.has(id)
             ? []
             : this.#status(id, "running", {
                 title,
-                taskType: "local_workflow",
-                runHandles: { runId: rootRunId },
+                taskType: isRoot ? "local_workflow" : "workflow_stage",
+                ...(isRoot ? {} : { parentAgentId: workflowId(rootRunId) }),
+                runHandles: { runId: target.runId },
               });
           return target.status === "running" ||
             target.status === "completed" ||
@@ -298,15 +387,28 @@ export class AtomicTasks {
                       `${target.status === "running" ? "Running" : target.status === "failed" ? "Failed" : "Finished"} ${target.toolName}`,
                     ),
                     lastToolName: target.toolName,
-                    taskType: "local_workflow",
+                    taskType: isRoot ? "local_workflow" : "workflow_stage",
                   },
                 },
               ]
             : started;
         }
         if (target.kind === "prompt") {
-          const id = workflowId(rootRunId);
+          const isRoot = target.runId === rootRunId;
+          const id = isRoot
+            ? workflowId(rootRunId)
+            : workflowMemberId(rootRunId, target.runId, "run");
           if (this.#terminal.has(id)) return [];
+          const title =
+            this.#workflowNames.get(target.runId) ?? `Atomic workflow ${target.runId.slice(0, 8)}`;
+          const started = this.#started.has(id)
+            ? []
+            : this.#status(id, "waiting", {
+                title,
+                taskType: isRoot ? "local_workflow" : "workflow_stage",
+                ...(isRoot ? {} : { parentAgentId: workflowId(rootRunId) }),
+                runHandles: { runId: target.runId },
+              });
           const summary =
             target.status === "opened"
               ? "Waiting for input"
@@ -314,14 +416,15 @@ export class AtomicTasks {
                 ? "Input answered"
                 : "Prompt cancelled";
           return [
+            ...started,
             {
               type: "task.progress",
               payload: {
                 taskId: id,
-                description:
-                  this.#workflowNames.get(rootRunId) ?? `Atomic workflow ${rootRunId.slice(0, 8)}`,
+                description: title,
                 summary,
-                taskType: "local_workflow",
+                status: "waiting",
+                taskType: isRoot ? "local_workflow" : "workflow_stage",
               },
             },
           ];
@@ -331,6 +434,8 @@ export class AtomicTasks {
       const activity = message.frame;
       if (activity.kind === "removed") {
         this.#observedRoots.delete(activity.rootRunId);
+        this.#failedTool.delete(workflowId(activity.rootRunId));
+        const members = this.#unavailableMembers(activity.rootRunId);
         const id = workflowId(activity.rootRunId);
         const title =
           this.#workflowNames.get(activity.rootRunId) ??
@@ -343,9 +448,10 @@ export class AtomicTasks {
           runHandles: { runId: activity.rootRunId },
         });
         return this.#terminal.has(id)
-          ? changed
+          ? [...changed, ...members]
           : [
               ...changed,
+              ...members,
               {
                 type: "task.progress",
                 payload: {
@@ -403,10 +509,14 @@ export class AtomicTasks {
         ...events,
         ...unavailable.flatMap((rootRunId) => {
           const id = workflowId(rootRunId);
-          if (this.#terminal.has(id)) return [];
+          const members = this.#unavailableMembers(rootRunId);
+          if (this.#terminal.has(id)) return members;
+          this.#active.delete(id);
+          this.#failedTool.delete(id);
           const title =
             this.#workflowNames.get(rootRunId) ?? `Atomic workflow ${rootRunId.slice(0, 8)}`;
           return [
+            ...members,
             {
               type: "task.progress" as const,
               payload: {
@@ -520,6 +630,7 @@ export class AtomicTasks {
                 : undefined;
       if (status === "completed" || status === "failed" || status === "cancelled") {
         this.#terminal.add(id);
+        this.#active.delete(id);
         const outcome = [
           ...(status === "failed" ? [result.error, result.cause] : []),
           result.finalOutput,
@@ -539,6 +650,23 @@ export class AtomicTasks {
           },
         ];
       }
+      if (frame.type === "tool_execution_end" && result.status === "continued") {
+        this.#active.delete(id);
+        return [
+          ...started,
+          {
+            type: "task.progress",
+            payload: {
+              taskId: id,
+              description: short(result.task),
+              summary: "Detached; activity unavailable",
+              status: "idle",
+              ...linkage,
+            },
+          },
+        ];
+      }
+      this.#active.set(id, { description: short(result.task), taskType: "subagent" });
       const lastTool = detail?.recentTools?.at(-1);
       const current = detail?.currentTool
         ? `${detail.currentTool}${detail.currentToolArgs ? ` ${detail.currentToolArgs}` : ""}`

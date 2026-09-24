@@ -52,6 +52,31 @@ on each selected environment, and reset returns to the environment's shared list
 For workspace mode, a project's `t3.json` preference applies when the project has no override.
 Browser access changes apply when an agent session next starts.
 
+## Project agents
+
+Open **Agents** in the sidebar, or **Settings → Agents** on mobile. Talk to your main
+agent and ask it to create an agent for a project. You can also create and edit one
+manually. Choose an existing project or create a workspace for research, business planning,
+and other work that does not need Git.
+
+Each project has one agent with its own instructions, saved decisions, and task history.
+On web and desktop, agents have their own sidebar section. Their delegated work stays in
+Project threads. Opening Agents takes you directly to your main agent chat. Use **Threads**
+in an agent chat to find previous conversations and delegated tasks. Right-click an agent
+in the sidebar, or use its actions menu, to edit, remove, pause, or start a new conversation.
+The chat actions menu also includes creation and defaults for new agents.
+Ask it to carry out work; delegated tasks appear as ordinary threads you can inspect or stop.
+Results and requests for input return to the project agent. Provider permission prompts
+still apply. Merging, deployment, and external messages require your explicit authorization.
+
+Codex is the initial default provider. You can change the default for new agents or choose
+a provider and model for one agent. Open the agent after its current turn finishes to start a conversation with the new provider; saved decisions, recent context, and task ownership carry over.
+Running and resumed task threads keep their existing provider. Atomic agent conversations and delegated tasks use Full access because its CLI does not support sandboxed permission modes. Atomic supports chat and delegated task execution, but its T3 integration cannot create agents or coordinate tasks from chat. Use a provider with coordination tools, such as Codex or Claude, to manage Atomic task workers.
+
+Pause coordination to stop new delegation and automatic follow-ups while running tasks finish.
+Resume it to process waiting results. Starting a new conversation retains saved decisions;
+removing an agent keeps its project and conversations.
+
 ## Storage cleanup
 
 Open **Settings → Storage** to enable automatic cleanup on one machine or all connected
@@ -99,3 +124,5 @@ On mobile, use **Settings → Source control** to change selected environment de
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+To assign an existing agent to another project, edit its Project field or ask the main agent to reassign it. The destination must not already have an agent. Finish or stop active work first. Reassignment starts a fresh conversation and clears saved project memory; earlier conversations and tasks remain in their original projects. The main agent continues to work across projects.

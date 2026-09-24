@@ -181,6 +181,7 @@ export interface CodexSessionRuntimeOptions {
   readonly appServerArgs?: ReadonlyArray<string>;
   /** Capabilities the session's `t3-code` MCP credential grants; drives the prompt blocks. */
   readonly mcpCapabilities?: ReadonlySet<string>;
+  readonly coordinatorOnly?: boolean | undefined;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -506,6 +507,42 @@ function readResumeCursorThreadId(
   return isCodexResumeCursorSchema(resumeCursor) ? resumeCursor.threadId : undefined;
 }
 
+export function coordinatorCodexConfig(
+  config: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const servers = config.mcp_servers;
+  const serverNames = servers && typeof servers === "object" ? Object.keys(servers) : [];
+  return {
+    ...Object.fromEntries(
+      serverNames
+        .filter((name) => name !== "t3-code")
+        .map((name) => [`mcp_servers.${name}.enabled`, false]),
+    ),
+    "mcp_servers.t3-code.enabled": true,
+    "mcp_servers.t3-code.enabled_tools": [
+      "assistant_status",
+      "assistant_action",
+      "assistant_thread",
+    ],
+    // These server-authorized coordination actions must not prompt or fail under `never`.
+    "mcp_servers.t3-code.tools.assistant_status.approval_mode": "approve",
+    "mcp_servers.t3-code.tools.assistant_action.approval_mode": "approve",
+    "mcp_servers.t3-code.tools.assistant_thread.approval_mode": "approve",
+    "features.shell_tool": false,
+    "features.apply_patch_freeform": false,
+    "features.js_repl": false,
+    "features.js_repl_tools_only": false,
+    "features.multi_agent": false,
+    "features.multi_agent_v2": false,
+    "agents.enabled": false,
+    "features.apps": false,
+    "features.plugins": false,
+    "features.browser_use": false,
+    "features.browser_use_external": false,
+    "features.codex_hooks": false,
+  };
+}
+
 function runtimeModeToThreadConfig(input: RuntimeMode): {
   readonly approvalPolicy: EffectCodexSchema.V2ThreadStartParams__AskForApproval;
   readonly sandbox: EffectCodexSchema.V2ThreadStartParams__SandboxMode;
@@ -547,12 +584,14 @@ function buildThreadStartParams(input: {
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly coordinatorConfig?: Record<string, unknown>;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   return {
     cwd: input.cwd,
-    approvalPolicy: config.approvalPolicy,
-    sandbox: config.sandbox,
+    approvalPolicy: input.coordinatorConfig ? "never" : config.approvalPolicy,
+    ...(input.coordinatorConfig ? { config: input.coordinatorConfig } : {}),
+    sandbox: input.coordinatorConfig ? "read-only" : config.sandbox,
     approvalsReviewer: config.approvalsReviewer,
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
@@ -623,6 +662,7 @@ export function buildTurnStartParams(input: {
   readonly interactionMode?: ProviderInteractionMode;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean | T3CodeToolAvailability;
+  readonly coordinatorOnly?: boolean | undefined;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -649,9 +689,11 @@ export function buildTurnStartParams(input: {
   return decodeCodexTurnStartParamsWithCollaborationMode({
     threadId: input.threadId,
     input: turnInput,
-    approvalPolicy: config.approvalPolicy,
+    approvalPolicy: input.coordinatorOnly ? "never" : config.approvalPolicy,
     approvalsReviewer: config.approvalsReviewer,
-    sandboxPolicy: runtimeModeToTurnSandboxPolicy(input.runtimeMode),
+    sandboxPolicy: input.coordinatorOnly
+      ? { type: "readOnly" }
+      : runtimeModeToTurnSandboxPolicy(input.runtimeMode),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
@@ -728,6 +770,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly coordinatorConfig?: Record<string, unknown>;
 }): Effect.Effect<typeof CodexThreadResumeMetadata.Type, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -735,6 +778,7 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
+    ...(input.coordinatorConfig ? { coordinatorConfig: input.coordinatorConfig } : {}),
   });
 
   if (resumeThreadId === undefined) {
@@ -2436,6 +2480,12 @@ export const makeCodexSessionRuntime = (
 
       const requestedModel = normalizeCodexModelSlug(options.model);
 
+      const coordinatorConfig = options.coordinatorOnly
+        ? coordinatorCodexConfig(
+            (yield* client.request("config/read", { cwd: options.cwd, includeLayers: false }))
+              .config,
+          )
+        : undefined;
       const opened = yield* openCodexThread({
         client,
         threadId: options.threadId,
@@ -2444,6 +2494,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        ...(coordinatorConfig ? { coordinatorConfig } : {}),
       });
 
       const providerThreadId = opened.thread.id;
@@ -2501,7 +2552,7 @@ export const makeCodexSessionRuntime = (
       sendTurn: (input) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
-          if (hasConfiguredMcpServer(options.appServerArgs)) {
+          if (hasConfiguredMcpServer(options.appServerArgs) && !options.coordinatorOnly) {
             yield* client.request("config/mcpServer/reload", undefined).pipe(
               Effect.catch((cause) =>
                 Effect.logWarning("Failed to refresh Codex MCP tool catalog before turn.", {
@@ -2516,6 +2567,7 @@ export const makeCodexSessionRuntime = (
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
+            coordinatorOnly: options.coordinatorOnly,
             ...(input.input ? { prompt: input.input } : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),

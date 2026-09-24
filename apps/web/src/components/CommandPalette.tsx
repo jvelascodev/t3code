@@ -1,4 +1,5 @@
-"use client";
+import { BotIcon } from "lucide-react";
+("use client");
 
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -2017,6 +2018,17 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:assistants",
+    searchTerms: ["agents", "agent", "assistants", "assistant", "delegate", "business", "project"],
+    title: "Open agents",
+    icon: <BotIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/assistants" });
+    },
+  });
 
   actionItems.push({
     kind: "action",

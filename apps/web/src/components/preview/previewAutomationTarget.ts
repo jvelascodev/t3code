@@ -1,4 +1,4 @@
-import type { PreviewSessionSnapshot } from "@t3tools/contracts";
+import type { PreviewAutomationOperation, PreviewSessionSnapshot } from "@t3tools/contracts";
 
 interface PreviewAutomationSessionIndex {
   readonly snapshot: PreviewSessionSnapshot | null;
@@ -8,8 +8,11 @@ interface PreviewAutomationSessionIndex {
 export function needsPreviewAutomationSessionSync(
   state: PreviewAutomationSessionIndex,
   requestedTabId: string | undefined,
+  operation?: PreviewAutomationOperation,
 ): boolean {
   return (
+    operation === "status" ||
+    operation === "open" ||
     Object.keys(state.sessions).length === 0 ||
     requestedTabId === undefined ||
     state.sessions[requestedTabId] === undefined

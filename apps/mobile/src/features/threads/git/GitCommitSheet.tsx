@@ -331,12 +331,14 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
 
           <View className={Platform.OS === "android" ? "gap-2" : "flex-row gap-3"}>
             <View className={Platform.OS === "android" ? undefined : "flex-1"}>
-              <SheetActionButton
-                icon="arrow.branch"
-                label="Commit on new branch"
-                disabled={noneSelected || busy}
-                onPress={() => void runCommitAction(true)}
-              />
+              {gitActions.canChangeWorkspace && (
+                <SheetActionButton
+                  icon="arrow.branch"
+                  label="Commit on new branch"
+                  disabled={noneSelected || busy}
+                  onPress={() => void runCommitAction(true)}
+                />
+              )}
             </View>
             <View className={Platform.OS === "android" ? undefined : "flex-1"}>
               <SheetActionButton

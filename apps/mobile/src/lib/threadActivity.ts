@@ -112,7 +112,10 @@ export interface WorkLogEntry {
     readonly agentTaskIds: ReadonlyArray<string>;
     readonly agents: ReadonlyArray<{
       readonly title: string;
-      readonly status: WorkLogToolLifecycleStatus | undefined;
+      readonly parentAgentId?: string;
+      readonly status: WorkLogToolLifecycleStatus | "unavailable" | undefined;
+      readonly inferred?: boolean;
+      readonly updatedOrder?: number;
       readonly detail: string | undefined;
       /** When this member last reported, so the card can show the newest activity. */
       readonly updatedAt: string;
@@ -126,11 +129,14 @@ interface DerivedWorkLogEntry extends WorkLogEntry {
   collapseKey?: string;
   /** Grouping key for subagent lifecycle rows (one row per agent). */
   taskId?: string;
+  parentAgentId?: string;
   /** The tool call that launched this agent, when the provider reports one. */
   agentSpawnToolCallId?: string;
   isWorkflowCoordinator?: boolean;
   /** Shell/monitor/plan tasks: ordinary work-log rows, never spawn batches. */
   isBackgroundTask?: boolean;
+  agentUnavailable?: boolean;
+  foldOrder?: number;
 }
 
 type RawThreadFeedEntry =
@@ -216,11 +222,13 @@ export interface AgentSpawnSummary {
   readonly title: string;
   /** Latest member activity while working, else the batch outcome. */
   readonly status: string;
-  readonly tone: "working" | "completed" | "failed" | "stopped";
+  readonly tone: "working" | "completed" | "failed" | "stopped" | "unavailable";
+  readonly coordinatorDetail?: string;
   readonly members: ReadonlyArray<{
     readonly title: string;
+    readonly parentTitle?: string;
     readonly status: string;
-    readonly tone: "working" | "completed" | "failed" | "stopped";
+    readonly tone: "working" | "completed" | "failed" | "stopped" | "unavailable";
     readonly detail: string | undefined;
     readonly updatedAt: string;
   }>;
@@ -371,6 +379,16 @@ function isTerminalTaskUpdate(activity: OrchestrationThreadActivity): boolean {
   );
 }
 
+function isAtomicWorkflowUpdate(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "task.updated") return false;
+  const payload = asRecord(activity.payload);
+  return (
+    (payload?.taskType === "local_workflow" || payload?.taskType === "workflow_stage") &&
+    typeof payload.taskId === "string" &&
+    payload.taskId.startsWith("atomic:workflow:")
+  );
+}
+
 /**
  * Quiet-timeline guarantee (mirrors web's session-logic): agent-internal
  * activity lives in the Agents sheet, not the work log. Agent lifecycle rows
@@ -426,6 +444,10 @@ function deriveWorkLogEntries(
   const ordered = Arr.sort(activities, activityOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of foldUserInputActivities(ordered)) {
+    if (activity.kind === "atomic.session.started") {
+      entries.push(toDerivedWorkLogEntry(activity));
+      continue;
+    }
     // The setup card owns its snapshot, including failed and cancelled outcomes.
     if (
       isWorktreeSetupActivity(activity.kind) &&
@@ -438,7 +460,12 @@ function deriveWorkLogEntries(
     // rewritten with a new createdAt on every update (and would otherwise
     // make the batch row a "fresh" row again on each tick).
     if (activity.kind === "task.started" && !isAgentTaskStartedActivity(activity)) continue;
-    if (activity.kind === "task.updated" && !isTerminalTaskUpdate(activity)) continue;
+    if (
+      activity.kind === "task.updated" &&
+      !isTerminalTaskUpdate(activity) &&
+      !isAtomicWorkflowUpdate(activity)
+    )
+      continue;
     if (activity.kind === "tool.progress") continue;
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
@@ -507,11 +534,13 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     isTaskActivity && typeof payload?.taskId === "string" && payload.taskId.length > 0
       ? payload.taskId
       : undefined;
+  const parentAgentId = isTaskActivity ? asTrimmedString(payload?.parentAgentId) : null;
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
     turnId: activity.turnId,
     ...(taskId ? { taskId } : {}),
+    ...(parentAgentId ? { parentAgentId } : {}),
     label: taskLabel || activity.summary,
     tone:
       activity.kind === "task.progress"
@@ -623,7 +652,8 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   // A Codex child that finishes its turn reports "idle" (resumable, not
   // terminal). For the batch row that is a finished member.
   if (!toolLifecycleStatus && isTaskActivity && payload?.status === "idle") {
-    toolLifecycleStatus = "completed";
+    if (taskId?.startsWith("atomic:")) entry.agentUnavailable = true;
+    else toolLifecycleStatus = "completed";
   }
   if (toolLifecycleStatus) {
     entry.toolLifecycleStatus = toolLifecycleStatus;
@@ -659,17 +689,56 @@ function agentSpawnRow(
   agentTaskIds: ReadonlyArray<string>,
   members: NonNullable<WorkLogEntry["agentSpawn"]>["agents"],
 ): DerivedWorkLogEntry {
-  // A finished coordinator settles members that never reported their own
-  // end; Claude stops synthesizing member ticks once the workflow is done.
-  const coordinator = workflowId === null ? undefined : members[agentTaskIds.indexOf(workflowId)];
-  const agents =
-    coordinator?.status !== undefined && coordinator.status !== "inProgress"
-      ? members.map((agent) =>
-          agent.status === undefined || agent.status === "inProgress"
-            ? { ...agent, status: coordinator.status }
-            : agent,
-        )
-      : members;
+  // A terminal run settles descendants whose own final event never arrived.
+  const agents = members.map((member) =>
+    member.inferred ? { ...member, status: undefined, detail: undefined } : member,
+  );
+  const children = new Map<string, number[]>();
+  for (const [index, agent] of agents.entries()) {
+    const parentId =
+      agent.parentAgentId ?? (agentTaskIds[index] === workflowId ? undefined : workflowId);
+    if (!parentId) continue;
+    const siblings = children.get(parentId) ?? [];
+    siblings.push(index);
+    children.set(parentId, siblings);
+  }
+  const terminal = (status: (typeof agents)[number]["status"]) =>
+    status !== undefined && status !== "inProgress";
+  const queue = agents.flatMap((agent, index) => (terminal(agent.status) ? [index] : []));
+  const visited = new Set<number>();
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const parentIndex = queue[cursor]!;
+    if (visited.has(parentIndex)) continue;
+    visited.add(parentIndex);
+    const parent = agents[parentIndex]!;
+    for (const childIndex of children.get(agentTaskIds[parentIndex]!) ?? []) {
+      const child = agents[childIndex]!;
+      if (
+        !terminal(child.status) &&
+        (child.inferred || (child.updatedOrder ?? -1) < (parent.updatedOrder ?? -1))
+      ) {
+        agents[childIndex] = {
+          ...child,
+          status:
+            parent.status === "completed"
+              ? "completed"
+              : parent.status === "unavailable"
+                ? "unavailable"
+                : "stopped",
+          inferred: true,
+          detail:
+            parent.status === "unavailable"
+              ? "Activity unavailable"
+              : parent.status === "completed"
+                ? undefined
+                : "Stopped with parent",
+          updatedAt: parent.updatedAt,
+          updatedOrder: parent.updatedOrder,
+        };
+      }
+      if (terminal(agents[childIndex]!.status)) queue.push(childIndex);
+    }
+  }
   const agentSpawn = { workflowId, agentTaskIds, agents };
   // The batch row has no detail of its own: its body lists the members.
   const { detail: _detail, ...anchorWithoutDetail } = anchor;
@@ -686,11 +755,19 @@ function agentSpawnMember(
   entry: DerivedWorkLogEntry,
   previous?: NonNullable<WorkLogEntry["agentSpawn"]>["agents"][number],
 ) {
+  const reportedStatus = entry.agentUnavailable
+    ? ("unavailable" as const)
+    : entry.toolLifecycleStatus;
   return {
     title: entry.toolTitle ?? previous?.title ?? entry.label,
-    status: entry.toolLifecycleStatus ?? previous?.status,
-    detail: entry.detail ?? previous?.detail,
+    parentAgentId: entry.parentAgentId ?? previous?.parentAgentId,
+    status: reportedStatus ?? previous?.status,
+    inferred: reportedStatus === undefined ? previous?.inferred : false,
+    detail:
+      entry.detail ??
+      (reportedStatus !== undefined && previous?.inferred ? undefined : previous?.detail),
     updatedAt: entry.createdAt,
+    updatedOrder: entry.foldOrder,
   };
 }
 
@@ -724,7 +801,7 @@ function agentSpawnLifecycleStatus(
   }
   if (statuses.includes("failed")) return "failed";
   if (statuses.includes("declined")) return "declined";
-  if (statuses.includes("stopped")) return "stopped";
+  if (statuses.includes("stopped") || statuses.includes("unavailable")) return "stopped";
   return "completed";
 }
 
@@ -748,7 +825,31 @@ function collapseDerivedWorkLogEntries(
       entry.agentSpawnToolCallId !== undefined ? [entry.agentSpawnToolCallId] : [],
     ),
   );
-  for (const entry of entries) {
+  for (const [foldOrder, entry] of entries.entries()) {
+    entry.foldOrder = foldOrder;
+    if (entry.sourceActivityKind === "atomic.session.started") {
+      for (const [index, row] of collapsed.entries()) {
+        const spawn = row.agentSpawn;
+        if (!spawn) continue;
+        const agents = spawn.agents.map((agent, memberIndex) =>
+          spawn.agentTaskIds[memberIndex]?.startsWith("atomic:") &&
+          (agent.status === undefined || agent.status === "inProgress")
+            ? {
+                ...agent,
+                status: "unavailable" as const,
+                detail: "Atomic activity unavailable",
+                updatedAt: entry.createdAt,
+              }
+            : agent,
+        );
+        collapsed[index] = {
+          ...row,
+          agentSpawn: { ...spawn, agents },
+          toolLifecycleStatus: agentSpawnLifecycleStatus(agents),
+        };
+      }
+      continue;
+    }
     if (
       entry.toolCallId !== undefined &&
       entry.taskId === undefined &&
@@ -1095,10 +1196,18 @@ export function agentSpawnLabel(spawn: NonNullable<WorkLogEntry["agentSpawn"]>):
   ).length;
   const failed = members.filter((agent) => agent.status === "failed").length;
   const stopped = members.filter((agent) => agent.status === "stopped").length;
+  const unavailable = spawn.agents.some((agent) => agent.status === "unavailable");
   if (working > 0) {
     return `Kicked off ${subjects} · ${working} working`;
   }
-  const status = failed > 0 ? `${failed} failed` : stopped > 0 ? `${stopped} stopped` : "completed";
+  const status =
+    failed > 0
+      ? `${failed} failed`
+      : unavailable
+        ? "activity unavailable"
+        : stopped > 0
+          ? `${stopped} stopped`
+          : "completed";
   return `Ran ${subjects} · ${status}`;
 }
 
@@ -1107,7 +1216,9 @@ function agentSpawnMembers(spawn: NonNullable<WorkLogEntry["agentSpawn"]>) {
   return spawn.agents.filter((_, index) => spawn.agentTaskIds[index] !== spawn.workflowId);
 }
 
-function agentSpawnTone(status: WorkLogToolLifecycleStatus | undefined): AgentSpawnSummary["tone"] {
+function agentSpawnTone(
+  status: WorkLogToolLifecycleStatus | "unavailable" | undefined,
+): AgentSpawnSummary["tone"] {
   switch (status) {
     case undefined:
     case "inProgress":
@@ -1119,6 +1230,8 @@ function agentSpawnTone(status: WorkLogToolLifecycleStatus | undefined): AgentSp
       return "failed";
     case "stopped":
       return "stopped";
+    case "unavailable":
+      return "unavailable";
   }
 }
 
@@ -1134,20 +1247,39 @@ export function agentSpawnSummary(
 ): AgentSpawnSummary {
   const members = agentSpawnMembers(spawn).map((agent) => {
     const tone = agentSpawnTone(agent.status);
+    const parentTitle =
+      agent.parentAgentId && agent.parentAgentId !== spawn.workflowId
+        ? spawn.agents[spawn.agentTaskIds.indexOf(agent.parentAgentId)]?.title
+        : undefined;
     return {
       title: agent.title,
+      parentTitle,
       status: tone === "working" ? "working" : (agent.status ?? tone),
       tone,
       detail: agent.detail,
       updatedAt: agent.updatedAt,
     };
   });
-  const tone = agentSpawnTone(batchStatus);
+  const batchTone = agentSpawnTone(batchStatus);
   // Keep the workflow's name visible even when stages have not appeared yet.
   const coordinator =
     spawn.workflowId === null
       ? undefined
       : spawn.agents[spawn.agentTaskIds.indexOf(spawn.workflowId)];
+  const coordinatorDetail =
+    coordinator?.detail && coordinator.detail !== coordinator.title
+      ? coordinator.detail
+      : undefined;
+  const specificCoordinatorDetail =
+    coordinatorDetail && ["Running", "Completed", "Failed", "Stopped"].includes(coordinatorDetail)
+      ? undefined
+      : coordinatorDetail;
+  const tone =
+    batchTone !== "working" &&
+    batchTone !== "failed" &&
+    spawn.agents.some((agent) => agent.status === "unavailable")
+      ? "unavailable"
+      : batchTone;
   const title =
     coordinator?.title ??
     (members.length === 0
@@ -1165,9 +1297,10 @@ export function agentSpawnSummary(
         undefined,
       );
     const status =
+      specificCoordinatorDetail ??
       latest?.detail ??
       (members.length > 1 ? `${working.length} of ${members.length} working` : "Working");
-    return { title, status, tone, members };
+    return { title, status, tone, members, coordinatorDetail: specificCoordinatorDetail };
   }
   // The batch tone covers a coordinator that failed or stopped on its own.
   const failed = members.filter((member) => member.tone === "failed").length;
@@ -1175,10 +1308,21 @@ export function agentSpawnSummary(
   const outcome =
     tone === "failed" || failed > 0
       ? `${members.length > 1 && failed > 0 ? `${failed} ` : ""}failed`
-      : tone === "stopped" || stopped > 0
-        ? `${members.length > 1 && stopped > 0 ? `${stopped} ` : ""}stopped`
-        : "completed";
-  return { title, status: outcome, tone, members };
+      : tone === "unavailable"
+        ? "Activity unavailable"
+        : tone === "stopped" || stopped > 0
+          ? `${members.length > 1 && stopped > 0 ? `${stopped} ` : ""}stopped`
+          : "completed";
+  return {
+    title,
+    status:
+      specificCoordinatorDetail && tone === "failed"
+        ? `failed · ${specificCoordinatorDetail}`
+        : outcome,
+    tone,
+    members,
+    coordinatorDetail: specificCoordinatorDetail,
+  };
 }
 
 function agentSpawnExpandedBody(spawn: NonNullable<WorkLogEntry["agentSpawn"]>): string | null {

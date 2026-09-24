@@ -62,6 +62,44 @@ function fold(rows: ReadonlyArray<OrchestrationThreadActivity>) {
 }
 
 describe("foldSubagentActivities", () => {
+  it("marks previous Atomic work unavailable on a new provider session", () => {
+    const rows = [
+      activity("task.started", {
+        taskId: "atomic:workflow:run-1",
+        taskType: "local_workflow",
+        title: "Review",
+      }),
+      activity("atomic.session.started", { timelineBypass: true }),
+    ];
+    expect(fold(rows)[0]).toMatchObject({
+      status: "idle",
+      progress: "Atomic activity unavailable",
+    });
+    rows.push(
+      activity("task.updated", {
+        taskId: "atomic:workflow:run-1",
+        taskType: "local_workflow",
+        status: "running",
+      }),
+    );
+    expect(fold(rows)[0]?.status).toBe("running");
+  });
+  it("keeps a cancelled Atomic prompt waiting until the run reports a new state", () => {
+    const id = "atomic:workflow:root:wf:child:run";
+    const rows = [
+      activity("task.started", {
+        taskId: id,
+        taskType: "workflow_stage",
+        title: "child",
+        parentAgentId: "atomic:workflow:root",
+      }),
+      activity("task.progress", { taskId: id, status: "waiting", summary: "Waiting for input" }),
+      activity("task.progress", { taskId: id, status: "waiting", summary: "Prompt cancelled" }),
+    ];
+    expect(fold(rows)[0]).toMatchObject({ status: "waiting", progress: "Prompt cancelled" });
+    rows.push(activity("task.updated", { taskId: id, status: "running" }));
+    expect(fold(rows)[0]?.status).toBe("running");
+  });
   it("shows the batch status limit after its parent turn ends without claiming a result", () => {
     const running = activity("task.progress", {
       taskId: "batch-1",
@@ -389,6 +427,50 @@ describe("foldSubagentActivities", () => {
 });
 
 describe("deriveAgentPanelModel", () => {
+  it("keeps nested workflow stages under their root group", () => {
+    const agents = fold([
+      activity("task.started", {
+        taskId: "atomic:workflow:root",
+        taskType: "local_workflow",
+        title: "root",
+      }),
+      activity("task.started", {
+        taskId: "atomic:workflow:root:wf:child:run",
+        taskType: "workflow_stage",
+        title: "child",
+        parentAgentId: "atomic:workflow:root",
+      }),
+      activity("task.started", {
+        taskId: "atomic:workflow:root:wf:child:stage:verify",
+        taskType: "workflow_stage",
+        title: "Verify",
+        parentAgentId: "atomic:workflow:root:wf:child:run",
+      }),
+    ]);
+    const model = deriveAgentPanelModel({ agents });
+    expect(
+      model.workflows[0]?.unphasedMembers.map((agent) => [agent.id, agent.parentAgentId]),
+    ).toEqual([
+      ["atomic:workflow:root:wf:child:run", "atomic:workflow:root"],
+      ["atomic:workflow:root:wf:child:stage:verify", "atomic:workflow:root:wf:child:run"],
+    ]);
+    expect(model.directAgents).toEqual([]);
+    const settled = fold([
+      activity("task.started", { taskId: "atomic:workflow:root", taskType: "local_workflow" }),
+      activity("task.started", {
+        taskId: "atomic:workflow:root:wf:child:run",
+        taskType: "workflow_stage",
+        parentAgentId: "atomic:workflow:root",
+      }),
+      activity("task.started", {
+        taskId: "atomic:workflow:root:wf:child:stage:verify",
+        taskType: "workflow_stage",
+        parentAgentId: "atomic:workflow:root:wf:child:run",
+      }),
+      activity("task.completed", { taskId: "atomic:workflow:root", status: "completed" }),
+    ]);
+    expect(settled.find((agent) => agent.id.endsWith("stage:verify"))?.status).toBe("completed");
+  });
   const roster = fold([
     activity("task.started", { taskId: "wf-1", taskType: "local_workflow", title: "audit" }),
     activity("task.progress", {

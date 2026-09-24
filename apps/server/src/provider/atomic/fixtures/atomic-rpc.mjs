@@ -7,7 +7,14 @@ if (process.argv.includes("--version")) {
 const emit = (frame) => process.stdout.write(JSON.stringify(frame) + "\n");
 const response = (command, data) =>
   emit({ type: "response", id: command.id, command: command.type, success: true, data });
-let model;
+let model = process.argv.includes("/tmp/resume-limited.jsonl") ? "limited" : undefined;
+let thinkingLevel =
+  process.argv.includes("/tmp/resume-high.jsonl") ||
+  process.argv.includes("/tmp/resume-limited.jsonl")
+    ? "high"
+    : "medium";
+const noModels = false;
+const failModels = false;
 if (process.argv.includes("early-observer")) {
   emit({
     type: "extension_ui_request",
@@ -33,14 +40,70 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
       sessionFile: process.argv.includes("--session")
         ? process.argv[process.argv.indexOf("--session") + 1]
         : "/tmp/atomic-fixture.jsonl",
-      model: { provider: "fixture", id: "default" },
+      model: { provider: "fixture", id: model ?? "default" },
+      thinkingLevel,
     });
-  else if (command.type === "get_available_models")
-    response(command, { models: [{ provider: "fixture", id: "test", name: "Test model" }] });
-  else if (command.type === "set_model") {
+  else if (command.type === "get_available_models") {
+    if (failModels) {
+      emit({ type: "response", id: command.id, success: false, error: "Unavailable" });
+      continue;
+    }
+    response(command, {
+      models: noModels
+        ? []
+        : [
+            {
+              provider: "fixture",
+              id: "test",
+              name: "Test model",
+              reasoning: true,
+              thinkingLevelMap: { xhigh: null, max: "max" },
+            },
+            {
+              provider: "fixture",
+              id: "limited",
+              name: "Limited model",
+              reasoning: true,
+              thinkingLevelMap: {
+                off: null,
+                minimal: null,
+                low: null,
+                medium: null,
+                xhigh: null,
+                max: "max",
+              },
+            },
+            { provider: "fixture", id: "plain", name: "Plain model", reasoning: false },
+          ],
+    });
+  } else if (command.type === "set_model") {
     model = command.modelId;
     response(command, {});
+  } else if (command.type === "get_available_thinking_levels") {
+    response(command, {
+      levels:
+        model === "plain"
+          ? ["off"]
+          : model === "limited"
+            ? ["high", "max"]
+            : ["off", "minimal", "low", "medium", "high", "max"],
+    });
+  } else if (command.type === "set_thinking_level") {
+    thinkingLevel = command.level;
+    response(command, { level: thinkingLevel });
   } else if (command.type === "prompt") {
+    if (command.message === "pending-rpc") {
+      emit({ type: "pending_rpc", id: command.id });
+      continue;
+    }
+    if (command.message === "slow-rpc") {
+      setTimeout(() => response(command, { accepted: true }), 80);
+      continue;
+    }
+    if (command.message === "external-model-change") {
+      model = "limited";
+      thinkingLevel = "high";
+    }
     if (command.message === "reject") {
       emit({ type: "response", id: command.id, success: false, error: "Rejected prompt" });
       continue;
@@ -173,7 +236,9 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
         type: "text_delta",
         delta: command.images?.length
           ? `images:${command.images[0].mimeType}:${command.images[0].data}`
-          : "Hello\u2028world " + (model ?? "default"),
+          : command.message === "thinking"
+            ? `Thinking level: ${thinkingLevel}`
+            : "Hello\u2028world " + (model ?? "default"),
       },
     });
     emit({
@@ -200,7 +265,10 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
     emit({ type: "agent_end", messages: [] });
   } else if (command.type === "abort") {
     emit({ type: "agent_end", messages: [] });
-    response(command);
+    if (command.delayResponse) setTimeout(() => response(command), 80);
+    else response(command);
+  } else if (command.type === "never_respond") {
+    continue;
   } else if (command.type === "extension_ui_response") {
     emit({
       type: "message_update",

@@ -3546,6 +3546,392 @@ describe("quiet timeline: nested agents", () => {
     expect(rows[0]?.getFullDetail()).toContain("No issues found");
   });
 
+  it("folds an Atomic workflow rename and coordinator wait into its mobile card", () => {
+    const taskId = "atomic:workflow:run-1";
+    const thread = makeThread({
+      id: ThreadId.make("thread-atomic-workflow"),
+      projectId: ProjectId.make("project-1"),
+      title: "Atomic workflow",
+      activities: [
+        makeActivity({
+          id: EventId.make("atomic-workflow-start"),
+          kind: "task.started",
+          summary: "Workflow started",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          payload: {
+            taskId,
+            taskType: "local_workflow",
+            agentKind: "agent",
+            title: "Atomic workflow run-1",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("atomic-stage-start"),
+          kind: "task.started",
+          summary: "Stage started",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          payload: {
+            taskId: "atomic:workflow:run-1:wf:run-1:stage:review",
+            taskType: "workflow_stage",
+            agentKind: "agent",
+            parentAgentId: taskId,
+            title: "Reviewer",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("atomic-workflow-rename"),
+          kind: "task.updated",
+          summary: "Workflow updated",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          payload: {
+            taskId,
+            taskType: "local_workflow",
+            agentKind: "agent",
+            title: "review",
+            workflowName: "review",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("atomic-workflow-wait"),
+          kind: "task.progress",
+          summary: "Waiting for input",
+          createdAt: "2026-04-01T00:00:04.000Z",
+          payload: {
+            taskId,
+            taskType: "local_workflow",
+            agentKind: "agent",
+            summary: "Waiting for input",
+            status: "waiting",
+          },
+        }),
+      ],
+    });
+    const rows = buildThreadFeed(thread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.workEntry.agentSpawn?.agents[0]).toMatchObject({
+      title: "review",
+      detail: "Waiting for input",
+    });
+    expect(
+      agentSpawnSummary(rows[0]!.workEntry.agentSpawn!, rows[0]?.lifecycleStatus),
+    ).toMatchObject({
+      title: "review",
+      status: "Waiting for input",
+    });
+    const completed = makeThread({
+      ...thread,
+      activities: [
+        ...thread.activities,
+        makeActivity({
+          id: EventId.make("atomic-workflow-complete"),
+          kind: "task.completed",
+          summary: "Completed",
+          createdAt: "2026-04-01T00:00:05.000Z",
+          payload: {
+            taskId,
+            taskType: "local_workflow",
+            agentKind: "agent",
+            status: "completed",
+            summary: "Completed",
+          },
+        }),
+      ],
+    });
+    const completedRow = buildThreadFeed(completed).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0];
+    expect(
+      agentSpawnSummary(completedRow!.workEntry.agentSpawn!, completedRow?.lifecycleStatus),
+    ).toMatchObject({
+      status: "completed",
+      coordinatorDetail: undefined,
+    });
+    const restarted = makeThread({
+      ...thread,
+      activities: [
+        ...thread.activities,
+        makeActivity({
+          id: EventId.make("atomic-restarted"),
+          kind: "atomic.session.started",
+          summary: "Atomic session started",
+          createdAt: "2026-04-01T00:00:05.000Z",
+          payload: { timelineBypass: true },
+        }),
+      ],
+    });
+    const settled = buildThreadFeed(restarted).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(settled[0]?.workEntry.agentSpawn?.agents).toEqual([
+      expect.objectContaining({ status: "unavailable", detail: "Atomic activity unavailable" }),
+      expect.objectContaining({ status: "unavailable", detail: "Atomic activity unavailable" }),
+    ]);
+    expect(
+      agentSpawnSummary(settled[0]!.workEntry.agentSpawn!, settled[0]?.lifecycleStatus),
+    ).toMatchObject({
+      status: "Activity unavailable",
+      tone: "unavailable",
+    });
+  });
+
+  it("shows detached Atomic children as unavailable rather than completed", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-detached-atomic"),
+      projectId: ProjectId.make("project-1"),
+      title: "Detached Atomic child",
+      activities: [
+        makeActivity({
+          id: EventId.make("detached-start"),
+          kind: "task.started",
+          summary: "Started",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          payload: {
+            taskId: "atomic:subagent:call:0",
+            taskType: "subagent",
+            agentKind: "agent",
+            title: "Reviewer",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("detached-idle"),
+          kind: "task.progress",
+          summary: "Detached; activity unavailable",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          payload: {
+            taskId: "atomic:subagent:call:0",
+            taskType: "subagent",
+            agentKind: "agent",
+            status: "idle",
+            summary: "Detached; activity unavailable",
+          },
+        }),
+      ],
+    });
+    const row = buildThreadFeed(thread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0];
+    expect(row?.workEntry.agentSpawn?.agents[0]?.status).toBe("unavailable");
+    expect(agentSpawnSummary(row!.workEntry.agentSpawn!, row?.lifecycleStatus)).toMatchObject({
+      status: "Activity unavailable",
+      tone: "unavailable",
+    });
+  });
+
+  it("settles a nested stage when its child run fails while the root continues", () => {
+    const rootId = "atomic:workflow:root";
+    const childId = `${rootId}:wf:child:run`;
+    const stageId = `${rootId}:wf:child:stage:verify`;
+    const at = (seconds: number) => `2026-04-01T00:00:0${seconds}.000Z`;
+    const task = (
+      id: string,
+      kind: "task.started" | "task.completed",
+      taskId: string,
+      seconds: number,
+      extra: Record<string, unknown>,
+    ) =>
+      makeActivity({
+        id: EventId.make(id),
+        kind,
+        summary: id,
+        createdAt: at(seconds),
+        payload: { taskId, agentKind: "agent", ...extra },
+      });
+    const thread = makeThread({
+      id: ThreadId.make("thread-nested-atomic"),
+      projectId: ProjectId.make("project-1"),
+      title: "Nested Atomic",
+      activities: [
+        task("root-start", "task.started", rootId, 1, {
+          taskType: "local_workflow",
+          title: "Root",
+        }),
+        task("child-start", "task.started", childId, 2, {
+          taskType: "workflow_stage",
+          title: "Child",
+          parentAgentId: rootId,
+        }),
+        task("stage-start", "task.started", stageId, 3, {
+          taskType: "workflow_stage",
+          title: "Verify",
+          parentAgentId: childId,
+        }),
+        task("child-failed", "task.completed", childId, 4, {
+          taskType: "workflow_stage",
+          status: "failed",
+          summary: "Failed",
+        }),
+      ],
+    });
+    const row = buildThreadFeed(thread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0];
+    const spawn = row!.workEntry.agentSpawn!;
+    expect(spawn.agents[spawn.agentTaskIds.indexOf(stageId)]?.status).toBe("stopped");
+    expect(agentSpawnSummary(spawn, row?.lifecycleStatus).members[1]).toMatchObject({
+      parentTitle: "Child",
+      tone: "stopped",
+    });
+    const late = makeThread({
+      ...thread,
+      activities: [
+        ...thread.activities.slice(0, 3),
+        task("root-completed", "task.completed", rootId, 4, {
+          taskType: "local_workflow",
+          status: "completed",
+          summary: "Completed",
+        }),
+        task("child-failed-late", "task.completed", childId, 5, {
+          taskType: "workflow_stage",
+          status: "failed",
+          summary: "Failed",
+        }),
+      ],
+    });
+    const lateRow = buildThreadFeed(late).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0];
+    const lateSpawn = lateRow!.workEntry.agentSpawn!;
+    expect(lateSpawn.agents[lateSpawn.agentTaskIds.indexOf(stageId)]?.status).toBe("stopped");
+    const retry = makeThread({
+      ...thread,
+      activities: [
+        ...thread.activities.slice(0, 3),
+        task("root-failed", "task.completed", rootId, 4, {
+          taskType: "local_workflow",
+          status: "failed",
+          summary: "Failed",
+        }),
+        makeActivity({
+          id: EventId.make("root-restarted"),
+          kind: "task.updated",
+          summary: "Running",
+          createdAt: at(5),
+          payload: {
+            taskId: rootId,
+            taskType: "local_workflow",
+            agentKind: "agent",
+            status: "running",
+          },
+        }),
+      ],
+    });
+    const retryRow = buildThreadFeed(retry).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0];
+    const retrySpawn = retryRow!.workEntry.agentSpawn!;
+    expect(retrySpawn.agents[retrySpawn.agentTaskIds.indexOf(stageId)]).toMatchObject({
+      status: undefined,
+      detail: undefined,
+    });
+    const childFirst = makeThread({
+      ...thread,
+      activities: [
+        ...thread.activities.slice(0, 3),
+        task("root-failed-first", "task.completed", rootId, 4, {
+          taskType: "local_workflow",
+          status: "failed",
+          summary: "Failed",
+        }),
+        makeActivity({
+          id: EventId.make("child-restarted"),
+          kind: "task.updated",
+          summary: "Running",
+          createdAt: at(5),
+          payload: {
+            taskId: childId,
+            taskType: "workflow_stage",
+            agentKind: "agent",
+            status: "running",
+          },
+        }),
+      ],
+    });
+    const childFirstRow = buildThreadFeed(childFirst).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0];
+    const childFirstSpawn = childFirstRow!.workEntry.agentSpawn!;
+    expect(childFirstSpawn.agents[childFirstSpawn.agentTaskIds.indexOf(childId)]).toMatchObject({
+      status: "inProgress",
+      detail: undefined,
+    });
+    expect(childFirstSpawn.agents[childFirstSpawn.agentTaskIds.indexOf(stageId)]).toMatchObject({
+      status: undefined,
+      detail: undefined,
+    });
+    const sameTime = at(3);
+    const starts = thread.activities.slice(0, 3).map((activity, index) => ({
+      ...activity,
+      createdAt: sameTime,
+      sequence: index + 1,
+    }));
+    const rootTerminal = makeActivity({
+      id: EventId.make("same-time-root-failed"),
+      kind: "task.completed",
+      summary: "Failed",
+      createdAt: sameTime,
+      sequence: 4,
+      payload: {
+        taskId: rootId,
+        taskType: "local_workflow",
+        agentKind: "agent",
+        status: "failed",
+        summary: "Failed",
+      },
+    });
+    const sibling = makeActivity({
+      id: EventId.make("same-time-sibling"),
+      kind: "task.started",
+      summary: "Sibling started",
+      createdAt: sameTime,
+      sequence: 5,
+      payload: {
+        taskId: `${rootId}:wf:other:run`,
+        taskType: "workflow_stage",
+        agentKind: "agent",
+        parentAgentId: rootId,
+        title: "Other",
+      },
+    });
+    const sameTimeThread = makeThread({
+      ...thread,
+      activities: [...starts, rootTerminal, sibling],
+    });
+    const sameTimeRow = buildThreadFeed(sameTimeThread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0];
+    const sameTimeSpawn = sameTimeRow!.workEntry.agentSpawn!;
+    expect(sameTimeSpawn.agents[sameTimeSpawn.agentTaskIds.indexOf(stageId)]?.status).toBe(
+      "stopped",
+    );
+    const childLater = makeActivity({
+      id: EventId.make("same-time-child-restart"),
+      kind: "task.updated",
+      summary: "Running",
+      createdAt: sameTime,
+      sequence: 5,
+      payload: {
+        taskId: childId,
+        taskType: "workflow_stage",
+        agentKind: "agent",
+        status: "running",
+      },
+    });
+    const reverseThread = makeThread({
+      ...thread,
+      activities: [...starts, rootTerminal, childLater],
+    });
+    const reverseRow = buildThreadFeed(reverseThread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0];
+    const reverseSpawn = reverseRow!.workEntry.agentSpawn!;
+    expect(reverseSpawn.agents[reverseSpawn.agentTaskIds.indexOf(childId)]?.status).toBe(
+      "inProgress",
+    );
+    expect(reverseSpawn.agents[reverseSpawn.agentTaskIds.indexOf(stageId)]?.status).toBeUndefined();
+  });
+
   it("summarizes a spawn card from the newest member report and the batch outcome", () => {
     type Member = NonNullable<WorkLogEntry["agentSpawn"]>["agents"][number];
     const member = (title: string, status: Member["status"], detail: string, seconds: number) =>
@@ -3571,6 +3957,46 @@ describe("quiet timeline: nested agents", () => {
         "inProgress",
       ),
     ).toMatchObject({ title: "2 subagents", status: "Reading b.ts", tone: "working" });
+    expect(
+      agentSpawnSummary(
+        {
+          workflowId: "wf",
+          agentTaskIds: ["wf", "wf:wf:child:run", "wf:wf:child:stage:verify"],
+          agents: [
+            member("Root", "inProgress", "Running", 1),
+            { ...member("Child", "inProgress", "Running", 2), parentAgentId: "wf" },
+            { ...member("Verify", "inProgress", "Checking", 3), parentAgentId: "wf:wf:child:run" },
+          ],
+        },
+        "inProgress",
+      ).members[1],
+    ).toMatchObject({ title: "Verify", parentTitle: "Child" });
+    expect(
+      agentSpawnSummary(
+        {
+          workflowId: "wf",
+          agentTaskIds: ["wf", "wf:wf:0"],
+          agents: [
+            member("review", "inProgress", "Running", 5),
+            member("Reviewer", "inProgress", "Reading src/index.ts", 4),
+          ],
+        },
+        "inProgress",
+      ),
+    ).toMatchObject({ status: "Reading src/index.ts", tone: "working" });
+    expect(
+      agentSpawnSummary(
+        {
+          workflowId: "wf",
+          agentTaskIds: ["wf", "wf:wf:0"],
+          agents: [
+            member("review", "completed", "Running", 5),
+            member("Reviewer", "completed", "Done", 4),
+          ],
+        },
+        "completed",
+      ),
+    ).toMatchObject({ status: "completed", tone: "completed", coordinatorDetail: undefined });
 
     // A declined request is a failed batch, not a completed one.
     expect(
@@ -3587,6 +4013,23 @@ describe("quiet timeline: nested agents", () => {
     expect(
       agentSpawnSummary(workflow([member("Reviewer", "completed", "", 3)]), "failed"),
     ).toMatchObject({ title: "review", status: "failed", tone: "failed" });
+    expect(
+      agentSpawnSummary(
+        {
+          workflowId: "wf",
+          agentTaskIds: ["wf", "wf:wf:0"],
+          agents: [
+            member("review", "failed", "Input rejected", 9),
+            member("Reviewer", "completed", "", 3),
+          ],
+        },
+        "failed",
+      ),
+    ).toMatchObject({
+      status: "failed · Input rejected",
+      coordinatorDetail: "Input rejected",
+      tone: "failed",
+    });
     expect(
       agentSpawnSummary(
         { workflowId: "wf", agentTaskIds: ["wf"], agents: [member("review", undefined, "", 1)] },

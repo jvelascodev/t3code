@@ -167,6 +167,9 @@ describe("ProviderCommandReactor", () => {
   });
 
   async function createHarness(input?: {
+    readonly coordinator?: boolean;
+    readonly sendTurnEffect?: () => Effect.Effect<void>;
+    readonly afterSessionErrorDispatch?: () => Effect.Effect<void>;
     readonly baseDir?: string;
     readonly initialTitle?: string;
     readonly deferReactorStart?: boolean;
@@ -267,10 +270,12 @@ describe("ProviderCommandReactor", () => {
       );
     });
     const sendTurn = vi.fn((_: unknown) =>
-      Effect.succeed({
-        threadId: ThreadId.make("thread-1"),
-        turnId: asTurnId("turn-1"),
-      }),
+      (input?.sendTurnEffect?.() ?? Effect.void).pipe(
+        Effect.as({
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+        }),
+      ),
     );
     const compactThread = vi.fn((_: ThreadId) => input?.compactThreadEffect?.() ?? Effect.void);
     const interruptTurn = vi.fn((_: unknown) => input?.interruptTurnEffect?.() ?? Effect.void);
@@ -448,7 +453,11 @@ describe("ProviderCommandReactor", () => {
             return (before?.() ?? Effect.void).pipe(
               Effect.andThen(engine.dispatch(command)),
               Effect.tap(() =>
-                isReplay ? (input?.afterTurnStartDispatch?.() ?? Effect.void) : Effect.void,
+                isReplay
+                  ? (input?.afterTurnStartDispatch?.() ?? Effect.void)
+                  : command.type === "thread.session.set" && command.session.status === "error"
+                    ? (input?.afterSessionErrorDispatch?.() ?? Effect.void)
+                    : Effect.void,
               ),
             );
           },
@@ -490,7 +499,11 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         }),
       ),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        ServerSettingsService.layerTest(
+          input?.coordinator ? { defaultThreadEnvMode: "worktree" } : {},
+        ),
+      ),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -500,7 +513,8 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
-    const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
+    const runEffect = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
+      runtime!.runPromise(effect);
 
     await Effect.runPromise(
       engine.dispatch({
@@ -520,6 +534,7 @@ describe("ProviderCommandReactor", () => {
         threadId: ThreadId.make("thread-1"),
         projectId: asProjectId("project-1"),
         title: input?.initialTitle ?? "Thread",
+        conversationKind: input?.coordinator ? "agent" : "task",
         modelSelection: modelSelection,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
@@ -2602,6 +2617,83 @@ describe("ProviderCommandReactor", () => {
         ?.messages.find((entry) => entry.id === asMessageId("user-message-branch-model"))?.text,
     ).toBe(prompt);
   });
+
+  effectIt.effect(
+    "keeps coordinator turns in the project workspace despite the worktree default",
+    () =>
+      Effect.gen(function* () {
+        let sent = yield* Deferred.make<void>();
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            coordinator: true,
+            sendTurnEffect: () => Deferred.succeed(sent, undefined).pipe(Effect.asVoid),
+          }),
+        );
+        for (const index of [1, 2]) {
+          sent = yield* Deferred.make<void>();
+          yield* harness.engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(`coordinator-turn-${index}`),
+            threadId: ThreadId.make("thread-1"),
+            message: {
+              messageId: asMessageId(`coordinator-message-${index}`),
+              role: "user",
+              text: "Plan work",
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt: `2026-01-01T00:00:0${index}.000Z`,
+          });
+          yield* Deferred.await(sent);
+          yield* Effect.promise(harness.drain);
+        }
+        expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+          cwd: "/tmp/provider-project",
+        });
+        expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+        expect(harness.createWorktree).not.toHaveBeenCalled();
+      }),
+  );
+
+  effectIt.effect("refuses to restore or run a legacy coordinator worktree", () =>
+    Effect.gen(function* () {
+      const failed = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          coordinator: true,
+          afterSessionErrorDispatch: () => Deferred.succeed(failed, undefined).pipe(Effect.asVoid),
+        }),
+      );
+      yield* Effect.promise(() =>
+        harness.runEffect(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`UPDATE projection_threads SET branch = 'legacy', worktree_path = ${NodePath.join(harness.stateDir, "missing-coordinator-worktree")} WHERE thread_id = 'thread-1'`;
+          }),
+        ),
+      );
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("coordinator-legacy-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("coordinator-legacy-message"),
+          role: "user",
+          text: "Plan work",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* Deferred.await(failed);
+      yield* Effect.promise(harness.drain);
+      expect(harness.startSession).not.toHaveBeenCalled();
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+      expect(harness.createWorktree).not.toHaveBeenCalled();
+    }),
+  );
 
   it("recreates a missing worktree from the thread branch before starting a turn", async () => {
     const harness = await createHarness();

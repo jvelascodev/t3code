@@ -475,6 +475,15 @@ export function foldSubagentActivities(
     const at = activity.createdAt;
 
     switch (activity.kind) {
+      case "atomic.session.started": {
+        for (const agent of agents.values()) {
+          if (!agent.id.startsWith("atomic:") || !isActiveSubagentStatus(agent.status)) continue;
+          agent.status = "idle";
+          agent.progress = "Atomic activity unavailable";
+          agent.updatedAt = at;
+        }
+        break;
+      }
       case "task.started": {
         const taskId = asString(payload.taskId);
         if (!taskId) break;
@@ -638,20 +647,28 @@ export function foldSubagentActivities(
   // run is over. Cascade the coordinator's outcome so stalled member rows
   // don't read as working forever (live-test finding: statuses drifted
   // whenever member terminal rows were lost or never emitted).
+  const children = new Map<string, MutableAgent[]>();
   for (const agent of agents.values()) {
-    if (agent.kind !== "workflow" || !isTerminalSubagentStatus(agent.status)) {
-      continue;
-    }
-    for (const member of agents.values()) {
-      if (member.parentAgentId !== agent.id) {
-        continue;
+    if (agent.parentAgentId === null) continue;
+    const siblings = children.get(agent.parentAgentId) ?? [];
+    siblings.push(agent);
+    children.set(agent.parentAgentId, siblings);
+  }
+  const settledParents = [...agents.values()].filter(
+    (agent) => children.has(agent.id) && isTerminalSubagentStatus(agent.status),
+  );
+  const visited = new Set<string>();
+  for (let index = 0; index < settledParents.length; index += 1) {
+    const parent = settledParents[index]!;
+    if (visited.has(parent.id)) continue;
+    visited.add(parent.id);
+    for (const member of children.get(parent.id) ?? []) {
+      if (!isTerminalSubagentStatus(member.status) && member.status !== "idle") {
+        member.status = parent.status === "completed" ? "completed" : "interrupted";
+        member.completedAt = member.completedAt ?? parent.completedAt ?? parent.updatedAt;
+        member.updatedAt = parent.updatedAt;
       }
-      if (isTerminalSubagentStatus(member.status) || member.status === "idle") {
-        continue;
-      }
-      member.status = agent.status === "completed" ? "completed" : "interrupted";
-      member.completedAt = member.completedAt ?? agent.completedAt ?? agent.updatedAt;
-      member.updatedAt = agent.updatedAt;
+      if (isTerminalSubagentStatus(member.status)) settledParents.push(member);
     }
   }
 
@@ -747,6 +764,7 @@ export function deriveAgentPanelModel({
     .slice()
     .sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt) || a.id.localeCompare(b.id));
   const workflowIds = new Set(workflows.map((workflow) => workflow.id));
+  const agentsById = new Map(source.map((agent) => [agent.id, agent]));
   const members = new Map<string, RuntimeSubagent[]>();
   const direct: RuntimeSubagent[] = [];
 
@@ -754,10 +772,16 @@ export function deriveAgentPanelModel({
     if (agent.kind === "workflow") {
       continue;
     }
-    if (agent.parentAgentId !== null && workflowIds.has(agent.parentAgentId)) {
-      const list = members.get(agent.parentAgentId) ?? [];
+    let parentId = agent.parentAgentId;
+    const visited = new Set<string>();
+    while (parentId !== null && !workflowIds.has(parentId) && !visited.has(parentId)) {
+      visited.add(parentId);
+      parentId = agentsById.get(parentId)?.parentAgentId ?? null;
+    }
+    if (parentId !== null && workflowIds.has(parentId)) {
+      const list = members.get(parentId) ?? [];
       list.push(agent);
-      members.set(agent.parentAgentId, list);
+      members.set(parentId, list);
     } else {
       // Orphaned members (coordinator aged out) fall back to the direct list.
       direct.push(agent);

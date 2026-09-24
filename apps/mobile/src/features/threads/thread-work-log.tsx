@@ -1001,6 +1001,7 @@ const AGENT_SPAWN_TONE_DOT_CLASS = {
   completed: "bg-adaptive-emerald-600-400",
   failed: "bg-adaptive-rose-600-400",
   stopped: "bg-foreground-muted",
+  unavailable: "bg-foreground-muted",
 } as const satisfies Record<AgentSpawnSummary["tone"], string>;
 
 /**
@@ -1098,6 +1099,11 @@ export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
             layout={WORK_LOG_LAYOUT_TRANSITION}
             className="ml-8 mt-1.5 gap-1.5 border-l border-border pl-3"
           >
+            {summary.coordinatorDetail && !working ? (
+              <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
+                {summary.coordinatorDetail}
+              </Text>
+            ) : null}
             {summary.members.map((member) => (
               <View key={member.title} className="gap-px">
                 <View className="flex-row items-center gap-1.5">
@@ -1110,6 +1116,11 @@ export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
                   <Text className="min-w-0 flex-1 text-xs text-foreground" numberOfLines={1}>
                     {member.title}
                   </Text>
+                  {member.parentTitle ? (
+                    <Text className="max-w-24 text-2xs text-foreground-muted" numberOfLines={1}>
+                      under {member.parentTitle}
+                    </Text>
+                  ) : null}
                   <Text className="shrink-0 text-2xs text-foreground-muted">{member.status}</Text>
                 </View>
                 {member.detail ? (

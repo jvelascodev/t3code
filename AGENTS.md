@@ -101,6 +101,12 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - Bring `secrets` and `settings.json` only if the flow under test needs them.
 - Copy in, never symlink. Data flows one way: into your sandbox, never back out.
 
+## CodeReview and QA Mandatory only when you implementing a new feature, fixing a bug, or maken code changes
+
+1. **Review with `scoped-review-loop`.** Follow [.agents/skills/scoped-review-loop/SKILL.md](.agents/skills/scoped-review-loop/SKILL.md) for parallel reviews, independent scope checks, and focused fixes until every review area reaches a scope-adjusted 5/5. Regressions introduced by the implementation remain in scope.
+2. **Run final functional QA with an independent agent.** Give the QA agent the task's acceptance criteria, the reviewed commit or tree, review findings and scope decisions, and existing test evidence. The agent checks user-visible behavior against those criteria and focuses on runtime gaps, affected integrations, and likely regressions. Reuse valid evidence for unchanged behavior. Do not repeat static code review or the full test suite without a specific reason. For documentation-only changes, check the instructions and links instead of running application QA.
+3. **Resolve QA findings within scope.** Each finding must include reproduction steps, expected and actual behavior, and evidence. Apply an independent scope check before fixing it. Acceptance-criteria failures and regressions introduced by the change are in scope. Record pre-existing issues and optional improvements separately. The implementation agent makes accepted fixes; the QA agent independently verifies them. Rerun failed scenarios and affected checks, and apply `scoped-review-loop` to corrective code changes. Carry forward unaffected review results and evidence with their original commit or tree references. Report each required scenario as passed, failed, or unverified, with the reason for any gap. Unverified behavior is not a pass; report required coverage gaps as blockers unless the user explicitly accepts them.
+
 ## Verifying
 
 - Smallest proof that the change works. `vp test run <files>` for the tests you touched, targeted lint and typecheck for the scope you changed.
@@ -114,7 +120,7 @@ For authorized mobile verification, a missing or outdated native client is a bui
 
 ## Pull requests
 
-- Never make a PR unless the developer explicitly asks you to do so.
+- **Ship.** When the reviews and applicable QA pass, accepted findings are resolved, relevant checks succeed, and evidence is complete, commit the change, push the task branch, and open or update a pull request. Include the problem, resulting behavior, checks, review findings, scope decisions, QA results, risks, and evidence. If a pull request is already open, complete this gate before merging. Do not merge unless the user requests it.
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
 - UI changes need before/after images. Motion or timing needs a short video.

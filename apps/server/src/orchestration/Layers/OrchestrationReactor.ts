@@ -1,3 +1,5 @@
+import * as Option from "effect/Option";
+import { AssistantReactor } from "../../assistants/AssistantReactor.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -16,6 +18,7 @@ import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 import * as StorageCleanup from "../../storageCleanup.ts";
 
 export const makeOrchestrationReactor = Effect.gen(function* () {
+  const assistantReactor = yield* Effect.serviceOption(AssistantReactor);
   const providerRuntimeIngestion = yield* ProviderRuntimeIngestionService;
   const providerCommandReactor = yield* ProviderCommandReactor;
   const checkpointReactor = yield* CheckpointReactor;
@@ -27,6 +30,7 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const storageCleanup = yield* StorageCleanup.StorageCleanup;
 
   const start: OrchestrationReactorShape["start"] = Effect.fn("start")(function* () {
+    if (Option.isSome(assistantReactor)) yield* assistantReactor.value.start();
     yield* providerRuntimeIngestion.start();
     yield* providerCommandReactor.start();
     yield* checkpointReactor.start();

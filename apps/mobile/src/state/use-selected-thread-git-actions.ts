@@ -36,6 +36,8 @@ export function useSelectedThreadGitActions() {
   const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
   const { selectedThread, selectedThreadProject } = useThreadSelection();
+  const isCoordinatorChat = selectedThread?.conversationKind === "agent";
+  const canChangeWorkspace = !isCoordinatorChat;
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
@@ -137,6 +139,13 @@ export function useSelectedThreadGitActions() {
         return null;
       }
 
+      if (
+        !canChangeWorkspace &&
+        (operation === "switch_ref" ||
+          operation === "create_ref" ||
+          operation === "create_worktree")
+      )
+        return null;
       const target = {
         environmentId: selectedThread.environmentId,
         cwd: selectedThreadCwd,
@@ -161,7 +170,7 @@ export function useSelectedThreadGitActions() {
       }
       return result.value;
     },
-    [selectedThread, selectedThreadCwd, selectedThreadProject],
+    [selectedThread, selectedThreadCwd, selectedThreadProject, canChangeWorkspace],
   );
 
   const refreshSelectedThreadBranches = useCallback(async (): Promise<ReadonlyArray<VcsRef>> => {
@@ -319,6 +328,7 @@ export function useSelectedThreadGitActions() {
 
   const onRunSelectedThreadGitAction = useCallback(
     async (input: GitActionRequestInput): Promise<GitRunStackedActionResult | null> => {
+      if (input.featureBranch && !canChangeWorkspace) return null;
       const actionId = uuidv4();
       return await runSelectedThreadGitMutation(
         "run_change_request",
@@ -367,6 +377,7 @@ export function useSelectedThreadGitActions() {
     },
     [
       runStackedAction,
+      canChangeWorkspace,
       refreshSelectedThreadGitStatus,
       runSelectedThreadGitMutation,
       selectedThreadWorktreePath,
@@ -375,6 +386,8 @@ export function useSelectedThreadGitActions() {
   );
 
   return {
+    isCoordinatorChat,
+    canChangeWorkspace,
     refreshSelectedThreadGitStatus,
     refreshSelectedThreadBranches,
     onCheckoutSelectedThreadBranch,

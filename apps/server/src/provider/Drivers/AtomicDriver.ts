@@ -4,18 +4,19 @@ import {
   TextGenerationError,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as FileSystem from "effect/FileSystem";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeAtomicAdapter } from "../atomic/AtomicAdapter.ts";
+import { atomicModelCapabilities } from "../atomic/AtomicThinking.ts";
 import { atomicError, makeAtomicRpc } from "../atomic/AtomicRpc.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -31,13 +32,15 @@ import {
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 
 const DRIVER = ProviderDriverKind.make("atomic");
-const capabilities = createModelCapabilities({ optionDescriptors: [] });
+const defaultCapabilities = atomicModelCapabilities({});
 const Models = Schema.Struct({
   models: Schema.Array(
     Schema.Struct({
       id: Schema.String,
       provider: Schema.String,
       name: Schema.String,
+      reasoning: Schema.optional(Schema.Boolean),
+      thinkingLevelMap: Schema.optional(Schema.Record(Schema.String, Schema.NullOr(Schema.String))),
     }),
   ),
 });
@@ -78,16 +81,52 @@ export const AtomicDriver: ProviderDriver<AtomicSettings, AtomicDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       let models: ReadonlyArray<ServerProviderModel> = [
-        { slug: "default", name: "Atomic default", isDefault: true, isCustom: false, capabilities },
+        {
+          slug: "default",
+          name: "Atomic default",
+          isDefault: true,
+          isCustom: false,
+          capabilities: defaultCapabilities,
+        },
       ];
       let modelsDiscovered = false;
+      const modelDiscoverySemaphore = yield* Semaphore.make(1);
+      const discoverModels = (force: boolean) =>
+        modelDiscoverySemaphore.withPermits(1)(
+          Effect.gen(function* () {
+            if (modelsDiscovered && !force) return;
+            const rpc = yield* makeAtomicRpc({
+              binaryPath: config.binaryPath,
+              cwd,
+              environment: env,
+              args: [
+                "--no-session",
+                "--no-extensions",
+                "--no-skills",
+                "--no-prompt-templates",
+                "--no-tools",
+              ],
+            });
+            const result = yield* rpc
+              .request("get_available_models")
+              .pipe(Effect.flatMap(decodeModels));
+            models = result.models.map((model) => ({
+              slug: `${model.provider}/${model.id}`,
+              name: model.name,
+              subProvider: model.provider,
+              isCustom: false,
+              capabilities: atomicModelCapabilities(model),
+            }));
+            modelsDiscovered = true;
+          }).pipe(Effect.scoped),
+        );
       const build = (probe: Parameters<typeof buildServerProvider>[0]["probe"]) => ({
         ...stamp(
           buildServerProvider({
             presentation,
             enabled,
             checkedAt: DateTime.formatIso(DateTime.nowUnsafe()),
-            models: providerModelsFromSettings(models, config.customModels, capabilities),
+            models: providerModelsFromSettings(models, config.customModels, defaultCapabilities),
             probe,
           }),
         ),
@@ -106,8 +145,11 @@ export const AtomicDriver: ProviderDriver<AtomicSettings, AtomicDriverEnv> = {
         const result = yield* spawnAndCollect(
           config.binaryPath,
           ChildProcess.make(command.command, command.args, { cwd, env, shell: command.shell }),
-        );
+        ).pipe(Effect.timeout("5 seconds"));
         if (result.code !== 0) return yield* atomicError("version", "Atomic version check failed");
+        if (!modelsDiscovered) {
+          yield* discoverModels(false).pipe(Effect.timeout("5 seconds"), Effect.ignoreCause());
+        }
         return build({
           installed: true,
           version: parseGenericCliVersion(result.stdout),
@@ -120,7 +162,6 @@ export const AtomicDriver: ProviderDriver<AtomicSettings, AtomicDriverEnv> = {
               : "Uses Atomic CLI credentials. Full access is required.",
         });
       }).pipe(
-        Effect.timeout("5 seconds"),
         Effect.catch(() =>
           Effect.succeed(
             build({
@@ -198,32 +239,9 @@ export const AtomicDriver: ProviderDriver<AtomicSettings, AtomicDriverEnv> = {
         adapter,
         refreshModels: () =>
           Effect.gen(function* () {
-            const rpc = yield* makeAtomicRpc({
-              binaryPath: config.binaryPath,
-              cwd,
-              environment: env,
-              args: [
-                "--no-session",
-                "--no-extensions",
-                "--no-skills",
-                "--no-prompt-templates",
-                "--no-tools",
-              ],
-            });
-            const result = yield* rpc
-              .request("get_available_models")
-              .pipe(Effect.flatMap(decodeModels));
-            modelsDiscovered = true;
-            models = result.models.map((model) => ({
-              slug: `${model.provider}/${model.id}`,
-              name: model.name,
-              subProvider: model.provider,
-              isCustom: false,
-              capabilities,
-            }));
+            yield* discoverModels(true);
             yield* snapshot.refresh;
           }).pipe(
-            Effect.scoped,
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.mapError(
               (cause) =>
