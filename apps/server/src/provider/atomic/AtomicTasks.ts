@@ -40,6 +40,41 @@ const WorkflowLifecycle = Schema.Struct({
 const ObserverMessage = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("activity"), frame: WorkflowActivity }),
   Schema.Struct({ kind: Schema.Literal("lifecycle"), event: WorkflowLifecycle }),
+  Schema.Struct({
+    kind: Schema.Literal("stage_task"),
+    runId: Schema.String,
+    stageId: Schema.String,
+    stageName: Schema.String,
+    task: Schema.Struct({
+      taskId: Schema.String,
+      parentTaskId: Schema.optional(Schema.String),
+      title: Schema.String,
+      role: Schema.optional(Schema.String),
+      model: Schema.optional(Schema.String),
+      effort: Schema.optional(Schema.String),
+      ordinal: Schema.Int,
+      execution: Schema.Struct({
+        kind: Schema.String,
+        result: Schema.optional(
+          Schema.Struct({
+            kind: Schema.String,
+            message: Schema.optional(Schema.String),
+            cause: Schema.optional(Schema.String),
+          }),
+        ),
+      }),
+      attention: Schema.String,
+      action: Schema.optional(Schema.String),
+      tool: Schema.optional(Schema.String),
+      metrics: Schema.optional(
+        Schema.Struct({
+          elapsedMs: Schema.optional(Schema.Finite),
+          toolCount: Schema.optional(Schema.Finite),
+          tokenCount: Schema.optional(Schema.Finite),
+        }),
+      ),
+    }),
+  }),
 ]);
 const decodeObserver = Schema.decodeUnknownOption(Schema.fromJsonString(ObserverMessage));
 
@@ -155,6 +190,7 @@ export class AtomicTasks {
   readonly #workflowNames = new Map<string, string>();
   readonly #toolNames = new Map<string, string>();
   readonly #observedRoots = new Set<string>();
+  readonly #rootByRun = new Map<string, string>();
   readonly #active = new Map<RuntimeTaskId, { description: string; taskType: string }>();
   readonly #failedTool = new Map<RuntimeTaskId, string>();
   #pendingNamedRun: string | undefined;
@@ -203,6 +239,25 @@ export class AtomicTasks {
           taskId,
           description: task.description,
           summary: "Workflow activity unavailable",
+          status: "idle",
+          taskType: task.taskType,
+        },
+      });
+    }
+    return events;
+  }
+
+  #unavailableStageChildren(stageId: RuntimeTaskId): TaskEvent[] {
+    const events: TaskEvent[] = [];
+    for (const [taskId, task] of this.#active) {
+      if (!taskId.startsWith(`${stageId}:child:`)) continue;
+      this.#active.delete(taskId);
+      events.push({
+        type: "task.progress",
+        payload: {
+          taskId,
+          description: task.description,
+          summary: "Stage ended; subagent outcome unavailable",
           status: "idle",
           taskType: task.taskType,
         },
@@ -284,8 +339,104 @@ export class AtomicTasks {
       const decoded = decodeObserver(frame.widgetLines?.[0]);
       if (decoded._tag === "None") return [];
       const message = decoded.value;
+      if (message.kind === "stage_task") {
+        const { runId, stageId, stageName, task } = message;
+        const rootRunId = this.#rootByRun.get(runId) ?? runId;
+        const canonicalStageId = runId === rootRunId ? stageId : `${runId}:${stageId}`;
+        const stage = workflowMemberId(rootRunId, runId, `stage:${canonicalStageId}`);
+        const id = workflowMemberId(
+          rootRunId,
+          runId,
+          `stage:${canonicalStageId}:child:${task.taskId}`,
+        );
+        const title = short(task.title || task.role || "Atomic subagent");
+        const linkage = {
+          title,
+          taskType: "subagent",
+          parentAgentId: task.parentTaskId
+            ? workflowMemberId(
+                rootRunId,
+                runId,
+                `stage:${canonicalStageId}:child:${task.parentTaskId}`,
+              )
+            : stage,
+          ...(task.role ? { role: task.role } : {}),
+          ...(task.model ? { model: task.model } : {}),
+          ...(task.effort ? { effort: task.effort } : {}),
+          agentIndex: Math.max(0, task.ordinal),
+        };
+        const parents = this.#started.has(stage)
+          ? []
+          : [
+              ...this.#status(workflowId(rootRunId), "running", {
+                title:
+                  this.#workflowNames.get(rootRunId) ?? `Atomic workflow ${rootRunId.slice(0, 8)}`,
+                taskType: "local_workflow",
+                runHandles: { runId: rootRunId },
+              }),
+              ...this.#status(stage, "running", {
+                title: stageName,
+                taskType: "workflow_stage",
+                parentAgentId: workflowId(rootRunId),
+              }),
+            ];
+        const started = this.#start(id, { taskId: id, description: title, ...linkage });
+        const result = task.execution.result;
+        if (task.execution.kind === "settled" && result) {
+          if (this.#terminal.has(id)) return parents;
+          this.#terminal.add(id);
+          this.#active.delete(id);
+          const status =
+            result.kind === "completed"
+              ? "completed"
+              : result.kind === "cancelled"
+                ? "stopped"
+                : "failed";
+          const summary =
+            result.message ??
+            (status === "completed"
+              ? "Completed; result text unavailable"
+              : (result.cause ?? "Subagent failed"));
+          return [
+            ...parents,
+            ...started,
+            {
+              type: "task.completed",
+              payload: { taskId: id, status, summary: resultText(summary), ...linkage },
+            },
+          ];
+        }
+        if (this.#terminal.has(id)) return parents;
+        this.#active.set(id, { description: title, taskType: "subagent" });
+        const status =
+          task.attention === "input-needed"
+            ? "waiting"
+            : task.execution.kind === "queued"
+              ? "pending"
+              : "running";
+        const tokens = task.metrics?.tokenCount;
+        return [
+          ...parents,
+          ...started,
+          {
+            type: "task.progress",
+            payload: {
+              taskId: id,
+              description: title,
+              status,
+              ...linkage,
+              ...(task.action ? { summary: short(task.action) } : {}),
+              ...(task.tool ? { lastToolName: task.tool } : {}),
+              ...(tokens !== undefined && tokens >= 0
+                ? { typedUsage: { totalTokens: Math.floor(tokens) } }
+                : {}),
+            },
+          },
+        ];
+      }
       if (message.kind === "lifecycle") {
         const { rootRunId, target } = message.event;
+        this.#rootByRun.set(target.runId, rootRunId);
         this.#observedRoots.add(rootRunId);
         if (target.kind === "run") {
           if (
@@ -321,6 +472,7 @@ export class AtomicTasks {
           const parent = workflowId(rootRunId);
           const owningRun =
             target.runId === rootRunId ? parent : workflowMemberId(rootRunId, target.runId, "run");
+          const stage = workflowMemberId(rootRunId, target.runId, `stage:${target.stageId}`);
           return [
             ...(this.#started.has(parent)
               ? []
@@ -339,8 +491,9 @@ export class AtomicTasks {
                   parentAgentId: parent,
                   runHandles: { runId: target.runId },
                 })),
+            ...(terminalWorkflowStatus(target.status) ? this.#unavailableStageChildren(stage) : []),
             ...this.#status(
-              workflowMemberId(rootRunId, target.runId, `stage:${target.stageId}`),
+              stage,
               workflowStatus(target.status),
               {
                 title: target.stageName,

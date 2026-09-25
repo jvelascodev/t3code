@@ -2,6 +2,140 @@ import { describe, expect, it } from "vite-plus/test";
 import { AtomicTasks } from "./AtomicTasks.ts";
 
 describe("Atomic task projection", () => {
+  it("replays stage owner snapshots with stable child identities after reconnect", () => {
+    const lifecycle = {
+      type: "extension_ui_request",
+      method: "setWidget",
+      widgetKey: "t3-atomic-observer",
+      widgetLines: [
+        JSON.stringify({
+          kind: "lifecycle",
+          event: {
+            rootRunId: "root",
+            runId: "root",
+            target: {
+              kind: "stage",
+              runId: "root",
+              stageId: "orchestrator",
+              stageName: "orchestrator-1",
+              status: "running",
+            },
+          },
+        }),
+      ],
+    } as const;
+    const stageTask = (taskId: string, execution: object) =>
+      ({
+        type: "extension_ui_request",
+        method: "setWidget",
+        widgetKey: "t3-atomic-observer",
+        widgetLines: [
+          JSON.stringify({
+            kind: "stage_task",
+            runId: "root",
+            stageId: "orchestrator",
+            stageName: "orchestrator-1",
+            task: {
+              taskId,
+              title: "Investigate the regression",
+              role: "debugger",
+              ordinal: taskId === "first" ? 0 : 1,
+              execution,
+              attention: "none",
+            },
+          }),
+        ],
+      }) as const;
+    const before = new AtomicTasks();
+    before.project(lifecycle);
+    const first = before.project(stageTask("first", { kind: "running" }));
+    expect(first.find((event) => event.type === "task.started")?.payload).toMatchObject({
+      parentAgentId: "atomic:workflow:root:wf:root:stage:orchestrator",
+      role: "debugger",
+    });
+    before.project(stageTask("first", { kind: "settled", result: { kind: "completed" } }));
+    const second = before.project(stageTask("second", { kind: "running" }));
+    expect(second.find((event) => event.type === "task.started")?.payload.taskId).not.toBe(
+      first.find((event) => event.type === "task.started")?.payload.taskId,
+    );
+
+    const after = new AtomicTasks();
+    after.project(lifecycle);
+    const replayedFirst = after.project(
+      stageTask("first", { kind: "settled", result: { kind: "completed" } }),
+    );
+    const replayedSecond = after.project(stageTask("second", { kind: "running" }));
+    expect(replayedFirst.find((event) => event.type === "task.started")?.payload.taskId).toBe(
+      first.find((event) => event.type === "task.started")?.payload.taskId,
+    );
+    expect(replayedSecond.find((event) => event.type === "task.started")?.payload.taskId).toBe(
+      second.find((event) => event.type === "task.started")?.payload.taskId,
+    );
+    expect(
+      after.project(stageTask("first", { kind: "settled", result: { kind: "completed" } })),
+    ).toEqual([]);
+  });
+
+  it("joins nested stage children to the lifecycle stage and leaves unobserved outcomes unavailable", () => {
+    const tasks = new AtomicTasks();
+    const observe = (value: object) =>
+      tasks.project({
+        type: "extension_ui_request",
+        method: "setWidget",
+        widgetKey: "t3-atomic-observer",
+        widgetLines: [JSON.stringify(value)],
+      });
+    const stage = {
+      kind: "stage",
+      runId: "nested",
+      stageId: "nested:orchestrator",
+      stageName: "orchestrator-1",
+    };
+    const lifecycle = (status: string) =>
+      observe({
+        kind: "lifecycle",
+        event: {
+          rootRunId: "root",
+          runId: "nested",
+          target: { ...stage, status },
+        },
+      });
+    const started = lifecycle("running");
+    const stageId = "atomic:workflow:root:wf:nested:stage:nested:orchestrator";
+    expect(started).toContainEqual(
+      expect.objectContaining({
+        type: "task.started",
+        payload: expect.objectContaining({ taskId: stageId }),
+      }),
+    );
+    const child = observe({
+      kind: "stage_task",
+      runId: "nested",
+      stageId: "orchestrator",
+      stageName: "orchestrator-1",
+      task: {
+        taskId: "debugger-1",
+        title: "Investigate",
+        role: "debugger",
+        ordinal: 0,
+        execution: { kind: "running" },
+        attention: "none",
+      },
+    });
+    expect(child.filter((event) => event.type === "task.started")).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({ parentAgentId: stageId }),
+      }),
+    ]);
+    const ended = lifecycle("completed");
+    expect(ended.map((event) => event.type)).toEqual(["task.progress", "task.completed"]);
+    expect(ended[0]?.payload).toMatchObject({
+      taskId: `${stageId}:child:debugger-1`,
+      status: "idle",
+      summary: "Stage ended; subagent outcome unavailable",
+    });
+  });
+
   it("marks a detached child unavailable after its tool call ends", () => {
     const tasks = new AtomicTasks();
     const child = (type: "tool_execution_update" | "tool_execution_end") =>

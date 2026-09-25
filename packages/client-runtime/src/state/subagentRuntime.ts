@@ -700,6 +700,7 @@ export function foldSubagentActivities(
 
 export interface AgentPanelWorkflowGroup {
   readonly workflow: RuntimeSubagent;
+  readonly memberDepths: ReadonlyMap<string, number>;
   readonly phases: ReadonlyArray<{
     readonly index: number;
     readonly title: string;
@@ -721,6 +722,7 @@ export interface AgentPanelModel {
   readonly idleCount: number;
   readonly settledCount: number;
   readonly totalTokens: number;
+  readonly hasTokenUsage: boolean;
   readonly hasAgents: boolean;
   readonly liveCount: number;
 }
@@ -733,6 +735,7 @@ const EMPTY_PANEL_MODEL: AgentPanelModel = {
   idleCount: 0,
   settledCount: 0,
   totalTokens: 0,
+  hasTokenUsage: false,
   hasAgents: false,
   liveCount: 0,
 };
@@ -790,6 +793,70 @@ export function deriveAgentPanelModel({
 
   const workflowGroups: AgentPanelWorkflowGroup[] = workflows.map((workflow) => {
     const workflowMembers = members.get(workflow.id) ?? [];
+    const memberIds = new Set(workflowMembers.map((member) => member.id));
+    const memberDepths = new Map<string, number>();
+    const visitingDepth = new Set<string>();
+    const depthOf = (member: RuntimeSubagent): number => {
+      const cached = memberDepths.get(member.id);
+      if (cached !== undefined) return cached;
+      if (visitingDepth.has(member.id)) return 0;
+      visitingDepth.add(member.id);
+      const parent = member.parentAgentId ? agentsById.get(member.parentAgentId) : undefined;
+      const depth = parent && memberIds.has(parent.id) ? Math.min(8, depthOf(parent) + 1) : 0;
+      visitingDepth.delete(member.id);
+      memberDepths.set(member.id, depth);
+      return depth;
+    };
+    for (const member of workflowMembers) depthOf(member);
+    const ordered = (list: ReadonlyArray<RuntimeSubagent>): RuntimeSubagent[] => {
+      const ids = new Set(list.map((member) => member.id));
+      const children = new Map<string, RuntimeSubagent[]>();
+      for (const member of list) {
+        const parent =
+          member.parentAgentId && ids.has(member.parentAgentId)
+            ? member.parentAgentId
+            : workflow.id;
+        const siblings = children.get(parent) ?? [];
+        siblings.push(member);
+        children.set(parent, siblings);
+      }
+      for (const siblings of children.values()) {
+        siblings.sort(
+          (a, b) =>
+            (a.agentIndex ?? 0) - (b.agentIndex ?? 0) ||
+            a.firstSeenAt.localeCompare(b.firstSeenAt) ||
+            a.id.localeCompare(b.id),
+        );
+      }
+      const output: RuntimeSubagent[] = [];
+      const visited = new Set<string>();
+      const visit = (parent: string) => {
+        for (const member of children.get(parent) ?? []) {
+          if (visited.has(member.id)) continue;
+          visited.add(member.id);
+          output.push(member);
+          visit(member.id);
+        }
+      };
+      visit(workflow.id);
+      for (const member of list) {
+        if (!visited.has(member.id)) output.push(member);
+      }
+      return output;
+    };
+    const phaseOf = (member: RuntimeSubagent): number | null => {
+      if (member.phaseIndex !== null) return member.phaseIndex;
+      let parentId = member.parentAgentId;
+      const visited = new Set<string>();
+      while (parentId && memberIds.has(parentId) && !visited.has(parentId)) {
+        visited.add(parentId);
+        const parent = agentsById.get(parentId);
+        if (parent?.phaseIndex !== null && parent?.phaseIndex !== undefined)
+          return parent.phaseIndex;
+        parentId = parent?.parentAgentId ?? null;
+      }
+      return null;
+    };
     const knownPhases =
       workflow.phases.length > 0
         ? workflow.phases
@@ -811,10 +878,9 @@ export function deriveAgentPanelModel({
 
     const knownPhaseIndices = new Set(knownPhases.map((phase) => phase.index));
     const phases = knownPhases.map((phase) => {
-      const phaseMembers = workflowMembers
-        .filter((member) => member.phaseIndex === phase.index)
-        .slice()
-        .sort((a, b) => (a.agentIndex ?? 0) - (b.agentIndex ?? 0));
+      const phaseMembers = ordered(
+        workflowMembers.filter((member) => phaseOf(member) === phase.index),
+      );
       const activeCount = phaseMembers.filter(
         // Idle members count as active for phase-liveness: a resumable Codex
         // member has not finished the phase.
@@ -843,12 +909,14 @@ export function deriveAgentPanelModel({
 
     // Unknown phase indices land here too — a member must never vanish just
     // because its phase row was lost (review finding).
-    const unphasedMembers = workflowMembers
-      .filter((member) => member.phaseIndex === null || !knownPhaseIndices.has(member.phaseIndex))
-      .slice()
-      .sort((a, b) => (a.agentIndex ?? 0) - (b.agentIndex ?? 0));
+    const unphasedMembers = ordered(
+      workflowMembers.filter((member) => {
+        const phase = phaseOf(member);
+        return phase === null || !knownPhaseIndices.has(phase);
+      }),
+    );
 
-    return { workflow, phases, unphasedMembers };
+    return { workflow, phases, unphasedMembers, memberDepths };
   });
 
   let runningCount = 0;
@@ -856,6 +924,7 @@ export function deriveAgentPanelModel({
   let idleCount = 0;
   let settledCount = 0;
   let totalTokens = 0;
+  let hasTokenUsage = true;
   for (const agent of source) {
     // A workflow coordinator with members is a container for those members, not
     // work of its own: it reports running for the whole run and aggregates their
@@ -867,6 +936,7 @@ export function deriveAgentPanelModel({
     else if (agent.status === "idle") idleCount += 1;
     else settledCount += 1;
     totalTokens += agent.usage?.totalTokens ?? 0;
+    hasTokenUsage &&= agent.usage !== null;
   }
 
   return {
@@ -881,6 +951,7 @@ export function deriveAgentPanelModel({
     idleCount,
     settledCount,
     totalTokens,
+    hasTokenUsage,
     hasAgents: true,
     liveCount: runningCount + waitingCount,
   };
