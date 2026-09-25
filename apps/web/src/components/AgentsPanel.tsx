@@ -140,9 +140,11 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
 function AgentRow({
   agent,
   parentTitle,
+  depth = 0,
 }: {
   agent: RuntimeSubagent;
   parentTitle?: string | undefined;
+  depth?: number | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const visuals = STATUS_VISUALS[agent.status];
@@ -164,7 +166,10 @@ function AgentRow({
   const hasDetails = Boolean(agent.result || agent.error || agent.recentActivity.length > 0);
 
   return (
-    <div>
+    <div
+      className={depth ? "border-l border-border/60" : undefined}
+      style={depth ? { marginLeft: depth * 12 } : undefined}
+    >
       <button
         type="button"
         disabled={!hasDetails}
@@ -370,9 +375,11 @@ function WorkflowScriptView({
  */
 function PhaseSection({
   phase,
+  memberDepths,
   defaultOpen = false,
 }: {
   phase: AgentPanelWorkflowGroup["phases"][number];
+  memberDepths: AgentPanelWorkflowGroup["memberDepths"];
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen || phase.state === "running");
@@ -422,7 +429,11 @@ function PhaseSection({
           </span>
         ) : null}
       </button>
-      {open ? phase.members.map((member) => <AgentRow key={member.id} agent={member} />) : null}
+      {open
+        ? phase.members.map((member) => (
+            <AgentRow key={member.id} agent={member} depth={memberDepths.get(member.id)} />
+          ))
+        : null}
     </div>
   );
 }
@@ -511,12 +522,18 @@ function ExpandedWorkflowSection({
         />
       ) : null}
       {group.phases.map((phase) => (
-        <PhaseSection key={phase.index} phase={phase} defaultOpen={!workflowIsLive(group)} />
+        <PhaseSection
+          key={phase.index}
+          phase={phase}
+          memberDepths={group.memberDepths}
+          defaultOpen={!workflowIsLive(group)}
+        />
       ))}
       {group.unphasedMembers.map((member) => (
         <AgentRow
           key={member.id}
           agent={member}
+          depth={group.memberDepths.get(member.id)}
           parentTitle={
             member.parentAgentId === group.workflow.id
               ? undefined
@@ -571,7 +588,17 @@ function CollapsedWorkflowSection({
           <span>
             {members.length} {members.length === 1 ? "agent" : "agents"}
           </span>
-          <span className="tabular-nums">· {formatSubagentTokenCount(totalTokens)} tok</span>
+          <span className="tabular-nums">
+            ·{" "}
+            {members.length > 0
+              ? members.every((member) => member.usage !== null)
+                ? formatSubagentTokenCount(totalTokens)
+                : "—"
+              : group.workflow.usage !== null
+                ? formatSubagentTokenCount(totalTokens)
+                : "—"}{" "}
+            tok
+          </span>
           {elapsed ? <span className="tabular-nums">· {elapsed}</span> : null}
           <ChevronRight aria-hidden className="size-3" />
         </span>
@@ -659,7 +686,9 @@ export function AgentsPanel({
           {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
           {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
         </span>
-        <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
+        <span className="tabular-nums">
+          Σ {model.hasTokenUsage ? formatSubagentTokenCount(model.totalTokens) : "—"} tok
+        </span>
       </footer>
     </div>
   );

@@ -5,6 +5,13 @@ if (process.argv.includes("--version")) {
   process.exit(0);
 }
 const emit = (frame) => process.stdout.write(JSON.stringify(frame) + "\n");
+const observe = (value) =>
+  emit({
+    type: "extension_ui_request",
+    method: "setWidget",
+    widgetKey: "t3-atomic-observer",
+    widgetLines: [JSON.stringify(value)],
+  });
 const response = (command, data) =>
   emit({ type: "response", id: command.id, command: command.type, success: true, data });
 let model = process.argv.includes("/tmp/resume-limited.jsonl") ? "limited" : undefined;
@@ -126,13 +133,6 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
       continue;
     }
     if (command.message === "tasks") {
-      const observe = (value) =>
-        emit({
-          type: "extension_ui_request",
-          method: "setWidget",
-          widgetKey: "t3-atomic-observer",
-          widgetLines: [JSON.stringify(value)],
-        });
       observe({
         kind: "activity",
         frame: {
@@ -221,6 +221,58 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
           rootRunId: "run-1",
           runId: "run-1",
           target: { kind: "run", runId: "run-1", status: "completed" },
+        },
+      });
+      continue;
+    }
+    if (command.message === "stage-tasks") {
+      observe({
+        kind: "lifecycle",
+        event: {
+          rootRunId: "run-stage",
+          runId: "run-stage",
+          target: {
+            kind: "stage",
+            runId: "run-stage",
+            stageId: "orchestrator",
+            stageName: "orchestrator-1",
+            status: "running",
+          },
+        },
+      });
+      const task = (taskId, execution, action) =>
+        observe({
+          kind: "stage_task",
+          runId: "run-stage",
+          stageId: "orchestrator",
+          stageName: "orchestrator-1",
+          task: {
+            taskId,
+            title: "Fix the regression",
+            role: "debugger",
+            ordinal: taskId === "child-1" ? 0 : 1,
+            execution,
+            attention: "none",
+            ...(action ? { action, tool: "read" } : {}),
+          },
+        });
+      task("child-1", { kind: "running" }, "Reading the failure log");
+      task("child-1", { kind: "settled", result: { kind: "completed" } });
+      task("child-2", { kind: "running" }, "Writing regression tests");
+      emit({ type: "agent_end", messages: [] });
+      task("child-2", { kind: "settled", result: { kind: "completed" } });
+      observe({
+        kind: "lifecycle",
+        event: {
+          rootRunId: "run-stage",
+          runId: "run-stage",
+          target: {
+            kind: "stage",
+            runId: "run-stage",
+            stageId: "orchestrator",
+            stageName: "orchestrator-1",
+            status: "completed",
+          },
         },
       });
       continue;

@@ -471,6 +471,47 @@ describe("deriveAgentPanelModel", () => {
     ]);
     expect(settled.find((agent) => agent.id.endsWith("stage:verify"))?.status).toBe("completed");
   });
+
+  it("orders stage children beneath their parent and counts only visible work", () => {
+    const root = "atomic:workflow:root";
+    const stage = `${root}:wf:root:stage:orchestrator`;
+    const first = `${stage}:child:first`;
+    const second = `${stage}:child:second`;
+    const agents = fold([
+      activity("task.started", { taskId: root, taskType: "local_workflow", title: "Atomic" }),
+      activity("task.started", {
+        taskId: stage,
+        taskType: "workflow_stage",
+        title: "orchestrator-1",
+        parentAgentId: root,
+      }),
+      activity("task.started", {
+        taskId: second,
+        taskType: "subagent",
+        title: "Verify",
+        role: "debugger",
+        parentAgentId: stage,
+        agentIndex: 1,
+      }),
+      activity("task.started", {
+        taskId: first,
+        taskType: "subagent",
+        title: "Investigate",
+        role: "debugger",
+        parentAgentId: stage,
+        agentIndex: 0,
+      }),
+      activity("task.completed", { taskId: first, status: "completed", parentAgentId: stage }),
+    ]);
+    const model = deriveAgentPanelModel({ agents });
+    const group = model.workflows[0]!;
+    expect(group.unphasedMembers.map((member) => member.id)).toEqual([stage, first, second]);
+    expect([stage, first, second].map((id) => group.memberDepths.get(id))).toEqual([0, 1, 1]);
+    expect(model.directAgents).toEqual([]);
+    expect(model.runningCount).toBe(2);
+    expect(model.settledCount).toBe(1);
+    expect(model.hasTokenUsage).toBe(false);
+  });
   const roster = fold([
     activity("task.started", { taskId: "wf-1", taskType: "local_workflow", title: "audit" }),
     activity("task.progress", {

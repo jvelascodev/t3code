@@ -449,4 +449,45 @@ it.layer(layer)("Atomic adapter", (it) => {
         expect(completedWorkflow.payload.taskId).toBe("atomic:workflow:run-1");
       }).pipe(Effect.scoped),
   );
+
+  it.effect.skipIf(windowsHost)(
+    "streams sequential same-role children from an orchestrator stage across the turn handoff",
+    () =>
+      Effect.gen(function* () {
+        const { adapter, events, threadId } = yield* setup;
+        yield* adapter.startSession({ threadId, runtimeMode: "full-access" });
+        yield* adapter.sendTurn({ threadId, input: "stage-tasks" });
+        expect((yield* nextEvent(events, "task.started")).payload.taskId).toBe(
+          "atomic:workflow:run-stage",
+        );
+        const stage = yield* nextEvent(events, "task.started");
+        expect(stage.payload).toMatchObject({
+          taskId: "atomic:workflow:run-stage:wf:run-stage:stage:orchestrator",
+          title: "orchestrator-1",
+        });
+        const first = yield* nextEvent(events, "task.started");
+        expect(first.payload).toMatchObject({
+          taskId: "atomic:workflow:run-stage:wf:run-stage:stage:orchestrator:child:child-1",
+          parentAgentId: stage.payload.taskId,
+          role: "debugger",
+        });
+        expect((yield* nextEvent(events, "task.progress")).payload).toMatchObject({
+          taskId: first.payload.taskId,
+          summary: "Reading the failure log",
+        });
+        expect((yield* nextEvent(events, "task.completed")).payload.taskId).toBe(
+          first.payload.taskId,
+        );
+        const second = yield* nextEvent(events, "task.started");
+        expect(second.payload).toMatchObject({
+          taskId: "atomic:workflow:run-stage:wf:run-stage:stage:orchestrator:child:child-2",
+          parentAgentId: stage.payload.taskId,
+          role: "debugger",
+        });
+        yield* nextEvent(events, "turn.completed");
+        expect((yield* nextEvent(events, "task.completed")).payload.taskId).toBe(
+          second.payload.taskId,
+        );
+      }).pipe(Effect.scoped),
+  );
 });
